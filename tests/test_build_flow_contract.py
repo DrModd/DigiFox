@@ -2,6 +2,7 @@
 """Regression contracts for the PureFox build entrypoints."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -74,14 +75,30 @@ class BuildFlowContractTests(unittest.TestCase):
         self.assertIn('mv "$BOOT_IMAGE_TMP" "$BINARIES_DIR/boot.img"', content)
         self.assertIn('rm -f "$BOOT_IMAGE_TMP"', content)
 
-    def test_post_image_requires_expected_release_inputs(self):
+    def test_post_image_uses_external_tree_release_hook(self):
         content = (
-            ROOT / "buildroot/board/luckfox-pico/common/post-image.sh"
+            ROOT / "ext_tree/board/luckfox/scripts/post-image.sh"
+        ).read_text()
+        defconfig = (
+            ROOT / "ext_tree/configs/luckfox_pico_max_defconfig"
         ).read_text()
 
         self.assertIn('"$BINARIES_DIR/rootfs.ubi"', content)
         self.assertIn('"$BINARIES_DIR/uboot-env.bin"', content)
+        self.assertIn('"$HOST_DIR/bin/mkenvimage"', content)
+        self.assertIn('"$BINARIES_DIR/rootfs.img"', content)
+        self.assertIn('"$BINARIES_DIR/env.img"', content)
+        self.assertIn('rootfs.ubi rootfs.ubifs uboot-env.bin', content)
+        self.assertIn('"$BINARIES_DIR"/*.dtb', content)
         self.assertNotIn("2>/dev/null", content)
+        self.assertIn(
+            'BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_ext_tree_PATH)/board/luckfox/scripts/post-image.sh"',
+            defconfig,
+        )
+        self.assertIn(
+            'BR2_PACKAGE_HOST_UBOOT_TOOLS_ENVIMAGE_SOURCE="$(BR2_EXTERNAL_ext_tree_PATH)/board/luckfox/config/uboot-env.txt"',
+            defconfig,
+        )
 
     def test_build_entrypoint_repairs_missing_uboot_environment_artifact(self):
         content = (ROOT / "build.sh").read_text()
@@ -95,16 +112,16 @@ class BuildFlowContractTests(unittest.TestCase):
         self.assertIn("status-monitor-rebuild", content)
         self.assertIn("volume-encoder-rebuild", content)
 
-    def test_readmes_do_not_reference_deleted_images(self):
-        deleted_images = (
-            "images/2026-05-24-09-29-43-image.png",
-            "images/2026-05-24-10-02-10-image.png",
+    def test_readmes_reference_existing_local_images(self):
+        image_pattern = re.compile(
+            r'''(?:src=["']|!\[[^\]]*\]\()(?P<path>images/[^"')\s]+)'''
         )
         for readme in (ROOT / "README.md", ROOT / "README_EN.md"):
             content = readme.read_text()
-            for image in deleted_images:
+            images = sorted(set(match.group("path") for match in image_pattern.finditer(content)))
+            for image in images:
                 with self.subTest(readme=readme.name, image=image):
-                    self.assertNotIn(image, content)
+                    self.assertTrue((ROOT / image).is_file(), image)
 
     def test_post_build_fails_if_required_external_toolchain_strip_is_missing(self):
         content = (

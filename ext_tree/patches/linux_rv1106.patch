@@ -1,7 +1,7 @@
 diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile
 --- linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile	2025-07-03 12:59:45.000000000 +0200
 +++ linux-rockchip-rk-6.1-rkr6.1_modify/arch/arm/boot/dts/Makefile	2025-11-22 20:03:36.598796410 +0100
-@@ -1122,152 +1122,7 @@
+@@ -1122,159 +1122,7 @@
  	r9a06g032-rzn1d400-db.dtb \
  	sh73a0-kzm9g.dtb
  dtb-$(CONFIG_ARCH_ROCKCHIP) += \
@@ -13,6 +13,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rv1103g-evb-v11.dtb \
 -	rv1103g-evb-v11-sii902x-bt6562hdmi.dtb \
 -	rv1103g-evb2-v10.dtb \
+-	rv1103g-luckfox-pico-mini.dtb \
 -	rv1103g-rmsl311-dloc-sl-v10.dtb \
 -	rv1103g-scaner-v10.dtb \
 -	rv1106g-38x38-ipc-v10.dtb \
@@ -47,6 +48,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rv1106g-evb2-v12-nofastae-spi-nor.dtb \
 -	rv1106g-evb2-v12-spi-nand-tb.dtb \
 -	rv1106g-evb2-v12-wakeup.dtb \
+-	rv1106g-luckfox-pico-pro-max.dtb \
 -	rv1106g-smart-door-lock-rmsl-v10.dtb \
 -	rv1106g-smart-door-lock-rmsl-v12.dtb \
 -	rv1106g-uvc-demo-v10.dtb \
@@ -128,8 +130,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rk3308hs-voice-module-board-v10-aarch32.dtb \
 -	rk3502g-evb1-v10.dtb \
 -	rk3503g-evb1-v10.dtb \
+-	rk3506b-armsom-forge1.dtb \
 -	rk3506b-evb1-v10.dtb \
 -	rk3506b-test2-v10.dtb \
+-	rk3506b-luckfox-lyra-ultra-w.dtb \
+-	rk3506b-luckfox-lyra-zero-w-sd.dtb \
 -	rk3506g-demo-display-control.dtb \
 -	rk3506g-evb1-v10.dtb \
 -	rk3506g-evb1-v10-amp.dtb \
@@ -141,9 +146,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/arch/arm/boot/dts/Makefile linux-roc
 -	rk3506g-evb1-v10-sii9022-bt1120-to-hdmi.dtb \
 -	rk3506g-evb1-v10-sii9022-rgb2hdmi.dtb \
 -	rk3506g-evb2-v10.dtb \
+-	rk3506g-luckfox-lyra-plus-sd.dtb \
 -	rk3506g-iotest-v10.dtb \
 -	rk3506g-iotest-v10-pdm.dtb \
 -	rk3506g-test1-v10-audio.dtb \
+-	rk3506j-forlinx-OK3506-S12_nand-microsd.dtb \
 -	rk3518-evb1-ddr4-v10.dtb \
 -	rk3528-demo4-ddr4-v10.dtb \
 -	rk3528-evb1-ddr4-v10.dtb \
@@ -1918,7 +1925,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  
  #define DRV_NAME "rockchip-i2s-tdm"
  
-@@ -33,518 +49,622 @@
+@@ -33,518 +49,624 @@
  #define HAVE_SYNC_RESET
  #endif
  
@@ -2128,6 +2135,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    atomic_t refcount;
 +    spinlock_t lock; /* xfer lock */
 +    int volume;
++    int volume_min_db;
 +    u32 volume_gain_q31;
 +    u32 volume_gain_q15;
 +    snd_pcm_uframes_t volume_appl_ptr;
@@ -2174,6 +2182,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    
 +    /* ALSA control for sysfs and alsamixer synchronization */
 +    struct snd_kcontrol *mute_kcontrol;
++    struct snd_kcontrol *volume_kcontrol;
 +    struct snd_soc_dai *dai; /* For ALSA card access */
 +    
 +    /* Saved format for forced changes application */
@@ -2975,7 +2984,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +674,3529 @@
+@@ -554,3020 +674,3628 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -5993,7 +6002,42 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +	1279174712, 1354970579, 1435257634, 1520301995, 1610385552, 1705806894,
 +	1806882307, 1913946815, 2027355294, 2147483647
 +};
- 
++#define ROCKCHIP_I2S_TDM_VOLUME_MIN_DB -120
++#define ROCKCHIP_I2S_TDM_Q31_ONE 2147483647U
++#define ROCKCHIP_I2S_TDM_GAIN_50DB_Q31 6790940U
++
++static u32 rockchip_i2s_tdm_q31_multiply(u32 left, u32 right)
++{
++    return div_u64((u64)left * right + ROCKCHIP_I2S_TDM_Q31_ONE / 2,
++                   ROCKCHIP_I2S_TDM_Q31_ONE);
++}
++
++static u32 rockchip_i2s_tdm_attenuation_to_gain_q31(unsigned int attenuation_cdb)
++{
++    unsigned int half_db_steps = attenuation_cdb / 50;
++    unsigned int remainder_cdb = attenuation_cdb % 50;
++    unsigned int blocks = half_db_steps / 100;
++    unsigned int residual_steps = half_db_steps % 100;
++    u32 gain;
++    u32 next_gain;
++    unsigned int i;
++
++    gain = rockchip_i2s_tdm_log_gain_q31[100 - residual_steps];
++    if (remainder_cdb) {
++        next_gain = residual_steps == 99 ?
++                    ROCKCHIP_I2S_TDM_GAIN_50DB_Q31 :
++                    rockchip_i2s_tdm_log_gain_q31[99 - residual_steps];
++        gain -= div_u64((u64)(gain - next_gain) * remainder_cdb + 25, 50);
++    }
++
++    for (i = 0; i < blocks; i++)
++        gain = rockchip_i2s_tdm_q31_multiply(gain,
++                                              ROCKCHIP_I2S_TDM_GAIN_50DB_Q31);
++
++    return gain;
++}
+-
++
 -static int rockchip_i2s_tdm_rd_wait_time_get(struct snd_kcontrol *kcontrol,
 -					     struct snd_ctl_elem_value *ucontrol)
 +static void rockchip_i2s_tdm_set_volume_gain(struct rk_i2s_tdm_dev *i2s_tdm,
@@ -6005,7 +6049,18 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	ucontrol->value.integer.value[0] = i2s_tdm->wait_time[SNDRV_PCM_STREAM_CAPTURE];
 -
 -	return 0;
-+    i2s_tdm->volume_gain_q31 = rockchip_i2s_tdm_log_gain_q31[volume];
++    int min_db = READ_ONCE(i2s_tdm->volume_min_db);
++    unsigned int range_cdb;
++    unsigned int attenuation_cdb;
++
++    if (!volume) {
++        i2s_tdm->volume_gain_q31 = 0;
++    } else {
++        range_cdb = (unsigned int)-min_db * 100;
++        attenuation_cdb = DIV_ROUND_CLOSEST(range_cdb * (100 - volume), 99);
++        i2s_tdm->volume_gain_q31 =
++            rockchip_i2s_tdm_attenuation_to_gain_q31(attenuation_cdb);
++    }
 +    i2s_tdm->volume_gain_q15 = DIV_ROUND_CLOSEST(i2s_tdm->volume_gain_q31, 65536);
  }
  
@@ -6216,6 +6271,45 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    
 +    mutex_unlock(&i2s_tdm->mute_lock);
 +}
++
++/* Logarithmic volume-range sysfs interface */
++static ssize_t volume_min_db_show(struct device *dev,
++                                  struct device_attribute *attr,
++                                  char *buf)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++
++    return sprintf(buf, "%d\n", READ_ONCE(i2s_tdm->volume_min_db));
++}
++
++static ssize_t volume_min_db_store(struct device *dev,
++                                   struct device_attribute *attr,
++                                   const char *buf, size_t count)
++{
++    struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++    int min_db;
++
++    if (kstrtoint(buf, 0, &min_db) ||
++        min_db < ROCKCHIP_I2S_TDM_VOLUME_MIN_DB || min_db > 0)
++        return -EINVAL;
++
++    WRITE_ONCE(i2s_tdm->volume_min_db, min_db);
++    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, i2s_tdm->volume);
++    rockchip_i2s_tdm_refresh_queued_pcm(i2s_tdm);
++
++    if (i2s_tdm->volume_kcontrol && i2s_tdm->dai &&
++        i2s_tdm->dai->component) {
++        snd_ctl_notify(i2s_tdm->dai->component->card->snd_card,
++                       SNDRV_CTL_EVENT_MASK_VALUE,
++                       &i2s_tdm->volume_kcontrol->id);
++    }
++
++    dev_info(dev, "Logarithmic volume range set to %d dB..0 dB\n", min_db);
++    return count;
++}
++
++static DEVICE_ATTR(volume_min_db, 0644, volume_min_db_show,
++                   volume_min_db_store);
 +
 +/* MCLK multiplier sysfs interface */
 +static ssize_t mclk_multiplier_show(struct device *dev,
@@ -7059,6 +7153,11 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +        dev_err(i2s_tdm->dev, "Failed to add volume control: %d\n", ret);
 +    else
 +        dev_info(i2s_tdm->dev, "Basic volume control added (no processing)\n");
++    if (!ret) {
++        i2s_tdm->volume_kcontrol = snd_soc_card_get_kcontrol(
++            dai->component->card, rockchip_i2s_tdm_volume_control.name);
++        i2s_tdm->dai = dai;
++    }
 +
 +    ret = snd_soc_add_dai_controls(dai, &rockchip_i2s_tdm_mute_control, 1);
 +    if (ret)
@@ -8213,12 +8312,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +    i2s_tdm->dev = &pdev->dev;
 +    i2s_tdm->volume = 100;
++    i2s_tdm->volume_min_db = -50;
 +    rockchip_i2s_tdm_set_volume_gain(i2s_tdm, i2s_tdm->volume);
 +    /* Initial mute state = true (muted on boot) */
 +    i2s_tdm->mute = true; 
 +    
 +    /* Initialize ALSA control pointers */
 +    i2s_tdm->mute_kcontrol = NULL;
++    i2s_tdm->volume_kcontrol = NULL;
 +    i2s_tdm->dai = NULL;
 +    
 +    /* Initialize MCLK multiplier - 512 by default */
@@ -8605,6 +8706,13 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    return ret;
 +    }
 +
++    /* Create sysfs attribute for the logarithmic volume range */
++    ret = device_create_file(&pdev->dev, &dev_attr_volume_min_db);
++    if (ret) {
++        dev_err(&pdev->dev, "Failed to create volume_min_db sysfs attribute: %d\n", ret);
++        /* Not critical, continue */
++    }
++
 +    /* Create sysfs attribute for MCLK multiplier switching */
 +    ret = device_create_file(&pdev->dev, &dev_attr_mclk_multiplier);
 +    if (ret) {
@@ -8700,6 +8808,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 -	clk_disable_unprepare(i2s_tdm->hclk);
 +    /* Remove sysfs attributes */
 +    device_remove_file(&pdev->dev, &dev_attr_mclk_multiplier);
++    device_remove_file(&pdev->dev, &dev_attr_volume_min_db);
 +    device_remove_file(&pdev->dev, &dev_attr_dsd_sample_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_pcm_channel_swap);
 +    device_remove_file(&pdev->dev, &dev_attr_dsd_physical_swap);

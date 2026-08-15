@@ -90,6 +90,12 @@ class AudioControlContractTests(unittest.TestCase):
                     (ROOT / relative_path).read_text(),
                 )
 
+        service_handler = (
+            ROOT
+            / "ext_tree/board/luckfox/rootfs_overlay/var/www/handle_service.php"
+        ).read_text()
+        self.assertIn("PUREFOX_AUDIO_LOCK_HELD=1", service_handler)
+
         for relative_path in (
             "ext_tree/board/luckfox/rootfs_overlay/opt/2_std.sh",
             "ext_tree/board/luckfox/rootfs_overlay/opt/2_usb.sh",
@@ -133,16 +139,16 @@ class AudioControlContractTests(unittest.TestCase):
                     (ROOT / relative_path).read_text(),
                 )
 
-    def test_player_switch_confirms_readiness_before_notifying_clients(self):
+    def test_player_switch_notifies_clients_before_background_readiness_probe(self):
         handler = (
             ROOT
             / "ext_tree/board/luckfox/rootfs_overlay/var/www/handle_service.php"
         ).read_text()
 
-        self.assertIn("$timeoutMs = 5000", handler)
+        self.assertIn("$timeoutMs = 1000", handler)
         self.assertLess(
-            handler.index("$confirmed = waitForProcess($proc)"),
             handler.index("/opt/dbus_notify ServiceChanged"),
+            handler.index("$confirmed = waitForProcess($proc"),
         )
 
     def test_alsa_cache_is_mutated_only_while_the_transition_lock_is_held(self):
