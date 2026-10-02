@@ -2984,7 +2984,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +674,3628 @@
+@@ -554,3020 +674,3622 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -6728,14 +6728,12 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    }
 +    
 +    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-+        /* PLAYBACK: copy from user and process */
++        /* PLAYBACK: copy raw samples only. The gain is applied once in
++         * rockchip_i2s_tdm_pcm_ack() (shared by writei and mmap paths), which
++         * also refreshes the shadow ring; doing both here doubled attenuation. */
 +        if (copy_from_user(dma_area, buf, bytes))
 +            return -EFAULT;
 +
-+        if (!i2s_tdm->dsd_mode_active && i2s_tdm->volume_shadow &&
-+            pos + bytes <= i2s_tdm->volume_shadow_bytes)
-+            memcpy((u8 *)i2s_tdm->volume_shadow + pos, dma_area, bytes);
-+        
 +        /* DSD MUTE: Replace data with silence signal (50% duty cycle) */
 +        if ((i2s_tdm->mute || i2s_tdm->auto_mute_active) && i2s_tdm->dsd_mode_active &&
 +            (substream->runtime->format == SNDRV_PCM_FORMAT_DSD_U32_LE || 
@@ -6756,10 +6754,6 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +            /* During mute do not apply sample swap - send clean silence signal */
 +            goto skip_dsd_processing;
 +        }
-+
-+        if (!i2s_tdm->dsd_mode_active)
-+            rockchip_i2s_tdm_process_pcm(i2s_tdm, substream->runtime,
-+                                          dma_area, bytes);
 +
 +        /* CRITICAL FIX FOR DSD: Swap upper and lower 16 bits */
 +        if (i2s_tdm->dsd_sample_swap && i2s_tdm->dsd_mode_active &&
