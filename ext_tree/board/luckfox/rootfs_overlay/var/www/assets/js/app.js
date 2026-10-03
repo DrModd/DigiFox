@@ -1147,7 +1147,7 @@ $(document).ready(function () {
     let lastSentVolume = null;
     let lastVolumeRequestAt = 0;
     let volumeKeyboardAdjusting = false;
-    const VOLUME_REQUEST_INTERVAL_MS = 200;
+    const VOLUME_REQUEST_INTERVAL_MS = 100;
 
     // Обновляем громкость из уже полученных данных status_fast.php (НЕ отдельный запрос!)
     function updateVolumeFromStatus(data) {
@@ -1239,11 +1239,16 @@ $(document).ready(function () {
         if (volumeReleaseTimer) {
             clearTimeout(volumeReleaseTimer);
         }
+        // The board's status pipeline (mixer poll + JSON + SSE) can lag the
+        // last command by up to ~1 s. Keep status-driven slider updates
+        // blocked until it has caught up, otherwise a stale value yanks the
+        // slider back right after the user stops scrolling and the next
+        // wheel tick continues from the wrong position.
         volumeReleaseTimer = setTimeout(() => {
             if (!volumeRequestInFlight && pendingVolume === null) {
                 isVolumeChanging = false;
             }
-        }, 250);
+        }, 1500);
     }
 
     // Send only one volume request at a time. While it is in flight, retain
@@ -1270,7 +1275,8 @@ $(document).ready(function () {
                 debugLog('Volume control disabled:', data.reason);
                 return;
             }
-            if (data.success) {
+            if (data.success && pendingVolume === null && volumeSlider &&
+                String(volume) === volumeSlider.value) {
                 volumeDisplay.textContent = volume;
             }
         })
