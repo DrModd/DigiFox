@@ -268,6 +268,7 @@
     <!-- JavaScript includes -->
     <script src="assets/js/jquery-3.7.1.min.js"></script>
     <script src="assets/js/app.js?v=<?php echo VERSION; ?>&t=<?php echo time(); ?>"></script>
+    <script src="assets/js/amp.js?v=<?php echo VERSION; ?>&t=<?php echo time(); ?>"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(function() {
