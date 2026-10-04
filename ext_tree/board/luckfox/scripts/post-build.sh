@@ -126,3 +126,20 @@ rm -f $TARGET_DIR/lib/libgomp.so
 # CI sets DIGIFOX_BUILD (e.g. 1.0.12); a local build gets 1.0-local-<date>.
 DIGIFOX_BASE=$(sed -n "s/.*DIGIFOX_VERSION', '\([^']*\)'.*/\1/p" "$TARGET_DIR/var/www/config.php")
 echo "${DIGIFOX_BUILD:-${DIGIFOX_BASE:-1.0}-local-$(date +%Y%m%d%H%M)}" > "$TARGET_DIR/etc/digifox-release"
+
+# DigiFox: Qobuz Connect shows the device by a name compiled into the prebuilt
+# qobuz-connect ("PureFox"; the -l option is ignored by this production build).
+# Replace that one string in place (same length) if it is where we expect it.
+QC="$TARGET_DIR/opt/qobuz-connect/qobuz-connect"
+QC_NAME_OFFSET=166740
+if [ -f "$QC" ]; then
+    qc_name=$(dd if="$QC" bs=1 skip=$QC_NAME_OFFSET count=8 2>/dev/null | od -An -c | tr -d ' \n')
+    if [ "$qc_name" = 'DigiFox\0' ]; then
+        echo "qobuz-connect: device name already DigiFox"
+    elif [ "$qc_name" = 'PureFox\0' ]; then
+        printf 'DigiFox' | dd of="$QC" bs=1 seek=$QC_NAME_OFFSET conv=notrunc 2>/dev/null
+        echo "qobuz-connect: device name set to DigiFox"
+    else
+        echo "WARNING: qobuz-connect: name string not found at $QC_NAME_OFFSET, left as is" >&2
+    fi
+fi
