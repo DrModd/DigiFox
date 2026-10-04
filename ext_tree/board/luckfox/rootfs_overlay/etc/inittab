@@ -34,11 +34,10 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 # on the same tty.
 # console::respawn:/sbin/getty -L  console 0 vt100
 
-# Root shell on the FIQ debugger console (UART2 / ttyFIQ0).  The STM32
-# controller sends shell command lines over the debug UART, e.g.:
-#   wget --post-data=service=naa http://127.0.0.1/handle_service.php
-#   wget --post-data=action=enable http://127.0.0.1/usb_to_i2s.php
-ttyFIQ0::respawn:-/bin/sh
+# DigiFox: the FIQ debugger console (UART2 / ttyFIQ0) is the link to the
+# DigiD D1 amplifier MCU (STM32, pf_link). pfctl serve reads commands and
+# reports stream rate/format, player, track. No shell on this UART.
+ttyFIQ0::respawn:/usr/bin/pfctl serve
 
 # Stuff to do for the 3-finger salute
 #::ctrlaltdel:/sbin/reboot

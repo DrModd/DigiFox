@@ -1,0 +1,181 @@
+#!/bin/sh
+#
+# pfctl — управление DigiFox (PureFox) с внешнего МК (STM32) через консольный UART
+#
+# Два режима:
+#   1) разовые команды из шелла:     pfctl src qobuz
+#   2) сервер на консоли (без шелла): в /etc/inittab
+#        ttyFIQ0::respawn:/usr/bin/pfctl serve
+#      читает команды построчно, отвечает строками, начинающимися с '@'
+#
+# Все ответы — одна строка, начинается с '@' (так МК отличит их от
+# сообщений ядра и загрузчика):
+#   @READY                 — сервер запущен, можно слать команды
+#   @OK <cmd> [<значение>] — успех
+#   @ERR <cmd> <причина>   — ошибка
+#   @BUSY <cmd>            — начато долгое действие (держать AX5689 в mute)
+#   @ST <json>             — status_fast.php одной строкой
+#   @RATE <Гц> <формат>    — текущий поток, например: @RATE 192000 S32_LE
+#   @RATE DSD<N>           — DSD, например: @RATE DSD128
+#   @RATE STOP             — ничего не играет
+# В режиме serve @RATE также приходит сам при каждой смене потока.
+#
+# Команды (регистр не важен, \r от МК отбрасывается):
+#   src <id>          naa raat mpd aprenderer aplayer apscream shairport lms
+#                     spotify qobuz
+#   usb on|off|get    режим USBtoI2S
+#   vol, mute         -> @ERR fixed_volume (DigiFox: громкость только в усилителе)
+#   st                полный статус (JSON)
+#   rate              текущая частота/формат
+#   ping              -> @PONG
+#   track             -> @TRACK <исполнитель>\t<название>  (пусто — нет трека)
+#   avol <pos> <max> <mute> <db> <power>
+#                     от усилителя (STM32): его состояние. Сохраняется
+#                     в /tmp/amp_state для приложения (amp.php). Ответа нет.
+#
+# Запросы приложения к усилителю (amp.php кладёт их в /tmp/amp_req):
+#   "vol <pos>" -> в UART уходит  @AVOL <pos>
+#   "mute"      -> в UART уходит  @AMUTE
+#   "power"     -> в UART уходит  @APOWER
+#
+# Сам (без запроса) в режиме serve сообщает:
+#   @RATE ...          смена потока
+#   @SRC <id>          сменился плеер (с веб-страницы, из приложения, с усилителя)
+#   @USB on|off        включён/выключен USBtoI2S
+#   @TRACK ...         сменился трек (Qobuz, Spotify, AirPlay, MPD — см. pfmeta, track.php).
+#                      Текст в однобайтовой кодировке шрифта усилителя:
+#                      ASCII + кириллица А..Яа..я = 0x80..0xBF
+
+URL=http://127.0.0.1
+WGET="wget -q -T 60 -O -"
+PLAYERS=" naa raat mpd aprenderer aplayer apscream shairport lms spotify qobuz "
+
+oneline() { tr -d '\r\n'; }
+track_line() { wget -q -T 3 -O - "$URL/track.php?amp=1" 2>/dev/null | tr -d '\r\n'; }
+post()    { $WGET --post-data="$2" "$URL/$1" 2>/dev/null | oneline; }
+get()     { $WGET "$URL/$1" 2>/dev/null | oneline; }
+ok()      { echo "@OK $*"; }
+err()     { echo "@ERR $*"; }
+
+# --- текущая частота/формат из ALSA ---------------------------------------
+rate_now() {
+    for f in /proc/asound/card*/pcm*p/sub0/hw_params; do
+        [ -r "$f" ] || continue
+        grep -q '^closed' "$f" && continue
+        fmt=$(sed -n 's/^format: *//p' "$f")
+        hz=$(sed -n 's/^rate: *\([0-9]*\).*/\1/p' "$f")
+        [ -z "$hz" ] && continue
+        case "$fmt" in
+            DSD_U32*) echo "DSD$((hz * 32 / 44100))"; return ;;
+            DSD_U16*) echo "DSD$((hz * 16 / 44100))"; return ;;
+            DSD_U8*)  echo "DSD$((hz * 8 / 44100))";  return ;;
+            *)        echo "$hz $fmt"; return ;;
+        esac
+    done
+    echo STOP
+}
+
+# --- выполнение одной команды ---------------------------------------------
+do_cmd() {
+    cmd=$(echo "$1" | tr 'A-Z' 'a-z'); arg=$(echo "$2" | tr 'A-Z' 'a-z')
+    case "$cmd" in
+        ping) echo "@PONG" ;;
+
+        src)
+            case "$PLAYERS" in *" $arg "*) ;; *) err src bad_id; return ;; esac
+            echo "@BUSY src"
+            # из режима USBtoI2S сначала выйти — как это делает веб-интерфейс
+            [ -f /etc/usb_to_i2s.state ] && post usb_to_i2s.php action=disable >/dev/null
+            r=$(post handle_service.php "service=$arg")
+            case "$r" in *'"status":"success"'*) ok src "$arg" ;; *) err src "$r" ;; esac
+            ;;
+
+        usb)
+            case "$arg" in
+                on)  a=enable ;;
+                off) a=disable ;;
+                get|"")
+                    r=$(post usb_to_i2s.php action=status)
+                    case "$r" in *true*) ok usb on ;; *false*) ok usb off ;; *) err usb "$r" ;; esac
+                    return ;;
+                *) err usb bad_arg; return ;;
+            esac
+            echo "@BUSY usb"
+            r=$(post usb_to_i2s.php "action=$a")
+            case "$r" in *successfully*) ok usb "$arg" ;; *) err usb "$r" ;; esac
+            ;;
+
+        vol|mute) # DigiFox: выход Фокса всегда 100%, громкость — МК + AX5689
+            err "$cmd" fixed_volume ;;
+
+        st)   echo "@ST $(get status_fast.php)" ;;
+
+        avol) # громкость усилителя от STM32 — молча сохранить для приложения
+            echo "$2 $3 $4 $5 ${6:-1} $(date +%s)" > /tmp/amp_state.tmp && mv /tmp/amp_state.tmp /tmp/amp_state
+            ;;
+        rate) echo "@RATE $(rate_now)" ;;
+        track) echo "@TRACK $(track_line)" ;;
+        "")   ;;
+        *)    err "$cmd" unknown ;;
+    esac
+}
+
+# --- сервер на консоли ----------------------------------------------------
+serve() {
+    stty -echo 2>/dev/null          # не возвращать эхо в МК
+    dmesg -n 1 2>/dev/null          # убрать сообщения ядра с консоли
+    # метаданные AirPlay (если установлен pfmeta; второй экземпляр сам не запустится)
+    [ -x /usr/bin/pfmeta ] && /usr/bin/pfmeta airplay </dev/null >/dev/null 2>&1 &
+    # фоновый наблюдатель: смена потока и запросы приложения к усилителю
+    (
+        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""
+        while true; do
+            if [ -f /tmp/amp_req ]; then
+                req=$(cat /tmp/amp_req); rm -f /tmp/amp_req
+                case "$req" in
+                    vol\ *) echo "@AVOL ${req#vol }" ;;
+                    mute)   echo "@AMUTE" ;;
+                    power)  echo "@APOWER" ;;
+                esac
+            fi
+            n=$((n + 1))
+            if [ $n -ge 3 ]; then          # частоту — раз в ~0,5 с
+                n=0
+                cur=$(rate_now)
+                [ "$cur" != "$last" ] && echo "@RATE $cur" && last=$cur
+                m=$((m + 1))
+                if [ $m -ge 2 ]; then      # плеер и режим USB — раз в ~1 с
+                    m=0
+                    svc=$(sed -n 's/.*"active_service":"\([^"]*\)".*/\1/p' /tmp/system_status.json 2>/dev/null)
+                    if [ -n "$svc" ] && [ "$svc" != "$last_svc" ]; then
+                        echo "@SRC $svc"
+                        [ -n "$last_svc" ] && rm -f /tmp/nowplaying   # трек прошлого плеера
+                        last_svc=$svc
+                    fi
+                    if [ -f /etc/usb_to_i2s.state ]; then u=on; else u=off; fi
+                    [ "$u" != "$last_usb" ] && echo "@USB $u" && last_usb=$u
+                    # трек: при изменении /tmp/nowplaying, а MPD — опрос раз в ~2 с
+                    np=$(cat /tmp/nowplaying 2>/dev/null); k=$((k + 1))
+                    if [ "$np" != "$last_np" ] || { [ "$svc" = mpd ] && [ $k -ge 2 ]; } || [ $k -ge 10 ]; then
+                        k=0; last_np=$np
+                        tr_=$(track_line)
+                        [ "$tr_" != "$last_tr" ] && echo "@TRACK $tr_" && last_tr=$tr_
+                    fi
+                fi
+            fi
+            sleep 0.15
+        done
+    ) &
+    echo "@READY"
+    while IFS= read -r line; do
+        line=$(echo "$line" | tr -d '\r')
+        set -- $line
+        do_cmd "$@"
+    done
+}
+
+case "$1" in
+    serve) serve ;;
+    "")    echo "usage: pfctl serve | pfctl <cmd> [arg]"; exit 1 ;;
+    *)     do_cmd "$1" "$2" ;;
+esac

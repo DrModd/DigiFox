@@ -22,7 +22,7 @@ start_qobuz() {
 
     export LD_PRELOAD=/usr/lib/libassert_hook.so
     /bin/sh -c 'export LD_PRELOAD=/usr/lib/libassert_hook.so; renice -15 $$ >/dev/null 2>&1; exec /opt/qobuz-connect/qobuz-connect -o "$1"' sh \
-        "$output_device" > /dev/null 2>&1 &
+        "$output_device" 2>&1 | /usr/bin/pfmeta qobuz >/dev/null 2>&1 &
 
     restore_mixer
 }

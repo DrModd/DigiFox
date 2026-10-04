@@ -1,0 +1,88 @@
+#!/bin/sh
+#
+# pfmeta — название текущего трека для усилителя DigiD D1 и приложения Fox Remote.
+# Пишет /tmp/nowplaying (UTF-8), 4 строки: плеер, исполнитель, название, альбом.
+# Дальше его читает track.php (а pfctl serve отправляет в UART: @TRACK ...).
+#
+#   pfmeta qobuz      читает вывод qobuz-connect со stdin (S95qobuz: "... 2>&1 | pfmeta qobuz")
+#   pfmeta spotify    вызывается librespot --onevent (переменные PLAYER_EVENT, NAME, ARTISTS, ALBUM)
+#   pfmeta airplay    фоновый разбор канала метаданных shairport-sync (запускает pfctl serve)
+#   pfmeta clear      стереть
+
+NP=/tmp/nowplaying
+PIPE=/tmp/shairport-sync-metadata
+
+put() {   # put <плеер> <исполнитель> <название> <альбом>
+    printf '%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" > $NP.tmp.$$ && mv $NP.tmp.$$ $NP
+}
+
+case "$1" in
+qobuz)
+    # [Stream N]: Stream metadata became available:
+    #       Title: ...
+    #       Artist: ...
+    #       Album: ...
+    t=""; a=""
+    while IFS= read -r l; do
+        case "$l" in
+            *"metadata became available"*) t=""; a="" ;;
+            *"Title: "*)  t=${l#*Title: } ;;
+            *"Artist: "*) a=${l#*Artist: } ;;
+            *"Album: "*)  put qobuz "$a" "$t" "${l#*Album: }" ;;
+        esac
+    done
+    ;;
+
+spotify)
+    case "$PLAYER_EVENT" in
+        track_changed)
+            a=$(printf '%s' "$ARTISTS" | head -1)       # несколько исполнителей — через \n
+            [ -z "$a" ] && a=$SHOW_NAME                 # подкаст
+            put spotify "$a" "$NAME" "$ALBUM" ;;
+    esac
+    ;;
+
+airplay)
+    # один экземпляр
+    if [ -f /tmp/pfmeta_airplay.pid ] && kill -0 "$(cat /tmp/pfmeta_airplay.pid)" 2>/dev/null; then exit 0; fi
+    echo $$ > /tmp/pfmeta_airplay.pid
+    while true; do
+        if [ -p $PIPE ]; then
+            # <item><type>636f7265</type><code>6d696e6d</code><length>12</length>
+            # <data encoding="base64">
+            # SGVsbG8gd29ybGQ=</data></item>
+            # asar 61736172 исполнитель, minm 6d696e6d название, asal 6173616c альбом,
+            # mden 6d64656e конец блока метаданных
+            awk -v np=$NP '
+            function save(  tmp) {
+                tmp = np ".tmp.air"
+                printf "shairport\n%s\n%s\n%s\n", v["61736172"], v["6d696e6d"], v["6173616c"] > tmp
+                close(tmp); system("mv " tmp " " np)
+            }
+            /<code>/ {
+                c = $0; sub(/.*<code>/, "", c); sub(/<\/code>.*/, "", c)
+                n = $0; sub(/.*<length>/, "", n); sub(/<\/length>.*/, "", n)
+                code = c; want = (n + 0 > 0)
+                if (!want) { if (code == "6d64656e") save(); else if (code in keep) v[code] = "" }
+                next
+            }
+            want {
+                d = $0; sub(/.*<data encoding="base64">/, "", d); sub(/<\/data>.*/, "", d)
+                if (d == "") next
+                want = 0
+                if (!(code in keep)) next
+                cmd = "echo \"" d "\" | base64 -d 2>/dev/null"; s = ""
+                while ((cmd | getline l) > 0) s = (s == "" ? l : s " " l)
+                close(cmd); v[code] = s
+            }
+            BEGIN { keep["61736172"]; keep["6d696e6d"]; keep["6173616c"] }
+            ' < $PIPE
+        fi
+        sleep 2
+    done
+    ;;
+
+clear) rm -f $NP ;;
+
+*) echo "usage: pfmeta qobuz|spotify|airplay|clear"; exit 1 ;;
+esac

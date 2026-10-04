@@ -13,6 +13,12 @@ DigiFox — форк прошивки [PureFox](https://github.com/ppy2/PureFox_
   - shairport-sync: `ignore_volume_control = "yes"`;
   - MPD: `mixer_type "none"`;
   - Roon: `volume: null` (как и в PureFox).
+- **Связь с усилителем встроена в прошивку** (раньше ставилась отдельно из [FoxRemoteN/extras](https://github.com/DrModd/FoxRemoteN/tree/main/extras)):
+  - консольный UART (UART2 / `ttyFIQ0`) занят сервером `pfctl serve` — протокол с STM32 (`pf_link`): `@RATE`, `@SRC`, `@USB`, `@TRACK`, команды `src`, `usb`, `st`, `rate`, `track`, `avol`; шелла на этом UART нет, доступ — по SSH;
+  - `pfmeta` собирает названия треков: Qobuz (вывод qobuz-connect), Spotify (`--onevent` librespot), AirPlay (канал метаданных shairport-sync), MPD;
+  - `amp.php`, `rate.php`, `track.php` — для приложения Fox Remote;
+  - команды `vol` и `mute` в `pfctl` отвечают `@ERR fixed_volume`: громкость только в усилителе.
+- **Убран `S90ak4137`** (инициализация AK4137 для платы DSD'it): в DigiD D1 AK4137 управляет STM32.
 - **Убраны** CelMusper и Tidal Connect.
 - **Онлайн-обновление отключено.** Штатный механизм PureFox синхронизирует всю rootfs с сервера автора и вернул бы стоковую прошивку. Обновление — только перепрошивкой нового образа DigiFox.
 - Имя устройства: `digifox` (`http://digifox/` или `http://digifox.local/`).
