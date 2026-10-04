@@ -6,8 +6,12 @@
 // the Fox Remote app does:
 //   amp.php -> /tmp/amp_req -> pfctl serve -> UART -> STM32 -> AX5689
 //
-// app.js is left untouched: the slider, icon and display are replaced with
-// clones, so its own handlers stay bound to detached elements.
+// The power button at the bottom right (in PureFox: shut down the Fox) toggles
+// the amplifier between on and standby (amp.php action=power -> @APOWER), like
+// the power button in the app. The Fox itself stays on.
+//
+// app.js is left untouched: the slider, icon, display and power button are
+// replaced with clones, so its own handlers stay bound to detached elements.
 (function () {
     'use strict';
 
@@ -26,12 +30,16 @@
     var slider = swap('volume-slider');
     var icon = swap('volume-icon');
     var display = swap('volume-display');
+    var power = swap('shutdown-link');
+    var powerIcon = power ? power.querySelector('img') : null;
     if (!slider || !display) return;
 
     var ru = (window.currentLang || navigator.language || 'en').toLowerCase().indexOf('ru') === 0;
     var T = ru
-        ? { vol: 'Громкость усилителя', mute: 'Включить звук', off: 'Усилитель выключен', none: 'Усилитель не на связи' }
-        : { vol: 'Amplifier volume', mute: 'Unmute', off: 'Amplifier is off', none: 'Amplifier not connected' };
+        ? { vol: 'Громкость усилителя', mute: 'Включить звук', off: 'Усилитель выключен', none: 'Усилитель не на связи',
+            pwrOn: 'Усилитель включён — перевести в дежурный режим', pwrOff: 'Усилитель в дежурном режиме — включить' }
+        : { vol: 'Amplifier volume', mute: 'Unmute', off: 'Amplifier is off', none: 'Amplifier not connected',
+            pwrOn: 'Amplifier is on — switch to standby', pwrOff: 'Amplifier is in standby — switch on' };
 
     var amp = null;            // last state from amp.php
     var lastUserAt = 0;        // time of the last user change
@@ -61,7 +69,32 @@
         }
     }
 
+    var powerBusy = false;
+
+    function renderPower() {
+        if (!power) return;
+        var present = !!(amp && amp.present);
+        power.disabled = !present;
+        power.style.cursor = present ? 'pointer' : 'not-allowed';
+        power.title = !present ? T.none : (amp.power ? T.pwrOn : T.pwrOff);
+        if (!powerIcon) return;
+        powerIcon.alt = 'Amplifier power';
+        if (!present) {
+            powerIcon.style.opacity = '0.25';
+            powerIcon.style.filter = '';
+        } else if (amp.power) {
+            // on: green
+            powerIcon.style.opacity = powerBusy ? '0.5' : '1';
+            powerIcon.style.filter = 'brightness(0) saturate(100%) invert(62%) sepia(55%) saturate(520%) hue-rotate(80deg)';
+        } else {
+            // standby: the usual grey icon
+            powerIcon.style.opacity = powerBusy ? '0.3' : '0.6';
+            powerIcon.style.filter = '';
+        }
+    }
+
     function render() {
+        renderPower();
         if (!amp || !amp.present) {
             setEnabled(false);
             display.textContent = '--';
@@ -157,6 +190,22 @@
             post('action=mute')
                 .catch(function (err) { console.error('amp mute:', err); })
                 .then(function () { schedulePoll(250); });   // the amplifier confirms in ~0.2 s
+        });
+    }
+
+    // ---- amplifier power ----
+    if (power) {
+        power.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!amp || !amp.present || powerBusy) return;
+            powerBusy = true;
+            renderPower();
+            post('action=power')
+                .catch(function (err) { console.error('amp power:', err); })
+                .then(function () {
+                    // the amplifier reports its new state within ~0.2 s; give it a moment
+                    setTimeout(function () { powerBusy = false; schedulePoll(0); }, 1200);
+                });
         });
     }
 
