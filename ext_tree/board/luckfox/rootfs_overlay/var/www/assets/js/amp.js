@@ -15,6 +15,11 @@
 (function () {
     'use strict';
 
+// app.js binds its handlers in $(document).ready. Take the controls over only
+// after that (ready callbacks run in order, amp.js is loaded after app.js),
+// otherwise app.js would bind to our clones and both would act.
+function start() {
+
     var POLL_MS = 1000;        // amplifier state poll
     var SEND_MS = 120;         // at most one volume request per this interval
     var HOLD_MS = 1500;        // keep the user's value this long after the last move
@@ -255,4 +260,9 @@
 
     render();
     schedulePoll(0);
+}
+
+if (window.jQuery) window.jQuery(start);
+else if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+else start();
 })();
