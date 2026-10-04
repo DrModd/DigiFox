@@ -180,8 +180,8 @@
         $('power-row').hidden = !amp;
         if (amp) {
             setText('power-state', amp.power ? T.on : T.standby);
-            $('power-state').className = 'power-state' + (amp.power ? '' : ' off');
-            $('power-btn').className = 'hifi' + (amp.power ? ' on' : '');
+            $('power-state').className = 'power-state' + (amp.power ? ' on' : ' off');
+            $('power-btn').className = 'hifi power' + (amp.power ? ' on' : '');
             $('power-btn').disabled = !idle;
         }
 
@@ -224,7 +224,7 @@
     function paintSlider(s) {
         var max = Number(s.max) || 1, pct = Math.max(0, Math.min(100, Number(s.value) / max * 100));
         s.style.setProperty('--pct', pct + '%');
-        s.style.setProperty('--fill', s.disabled ? '#444444' : '#ededed');
+        s.style.setProperty('--fill', s.disabled ? 'var(--faint)' : 'var(--fg)');
     }
 
     // ---------------- actions ----------------

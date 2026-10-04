@@ -4,9 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#0b0b0b">
+    <meta name="theme-color" content="#101113" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#eef0f2" media="(prefers-color-scheme: light)">
     <title>DigiFox</title>
-    <link rel="icon" href="favicon.ico">
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <link rel="stylesheet" href="assets/css/digifox.css?v=<?php echo VERSION; ?>">
 </head>
 <body>
@@ -36,15 +39,16 @@
 
     <div class="status" id="status"></div>
 
-    <section class="power-row" id="power-row">
+    <section class="panel">
+    <div class="power-row" id="power-row">
         <div class="grow">
             <div class="cap" data-t="amp">УСИЛИТЕЛЬ DIGID D1</div>
             <div class="power-state" id="power-state">—</div>
         </div>
-        <button class="hifi" id="power-btn" data-t="power">POWER</button>
-    </section>
+        <button class="hifi power" id="power-btn" data-t="power">POWER</button>
+    </div>
 
-    <section class="volume">
+    <div class="volume">
         <div class="vol-head">
             <div class="grow">
                 <div class="cap" data-t="volume">ГРОМКОСТЬ УСИЛИТЕЛЯ</div>
@@ -54,16 +58,21 @@
         </div>
         <input type="range" id="vol" min="0" max="100" value="0" disabled aria-label="Громкость">
         <div class="note" id="vol-note"></div>
+    </div>
     </section>
 
-    <div class="cap" data-t="mode">РЕЖИМ</div>
-    <section class="row2">
-        <button class="hifi" id="mode-net" data-t="net">СЕТЬ</button>
-        <button class="hifi" id="mode-usb">USB → I2S</button>
+    <section class="panel">
+        <div class="cap" data-t="mode">РЕЖИМ</div>
+        <div class="row2">
+            <button class="hifi" id="mode-net" data-t="net">СЕТЬ</button>
+            <button class="hifi" id="mode-usb">USB → I2S</button>
+        </div>
     </section>
 
-    <div class="cap" data-t="players">ПЛЕЕРЫ</div>
-    <section class="grid" id="players"></section>
+    <section class="panel">
+        <div class="cap" data-t="players">ПЛЕЕРЫ</div>
+        <div class="grid" id="players"></div>
+    </section>
 
     <footer class="foot" id="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>
 </main>
@@ -72,7 +81,7 @@
 <div class="sheet" id="menu" hidden>
     <div class="sheet-box">
         <div class="cap">DIGIFOX v<?php echo htmlspecialchars(VERSION); ?></div>
-        <a class="menu-item" href="i2s.php" data-t="m_i2s">Настройки I2S</a>
+        <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
         <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>
         <button class="menu-item" id="m-reboot" data-t="m_reboot">Перезагрузить Фокс</button>
         <a class="menu-item" href="classic.php" data-t="m_classic">Классический интерфейс PureFox</a>
