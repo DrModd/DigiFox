@@ -1,4 +1,13 @@
 <?php
+// DigiFox: output is always 100% (volume lives in the DigiD D1 amplifier MCU + AX5689)
+function digifox_fixed_volume(array $st): array {
+    $st['volume'] = '100%';
+    $st['muted'] = false;
+    $st['volume_control_available'] = false;
+    $st['mute_control_available'] = false;
+    return $st;
+}
+
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -47,7 +56,7 @@ if (file_exists($status_file)) {
                     
                     // Add marker that data is from C-monitor
                     $decoded['source'] = 'c_monitor';
-                    echo json_encode($decoded);
+                    echo json_encode(digifox_fixed_volume($decoded));
                     exit;
                 }
             }
@@ -219,5 +228,5 @@ if ($status['alsa_state'] === 'usb' && !$status['usb_dac']) {
     $status['mute_control_available'] = $mute_found;
 }
 
-echo json_encode($status);
+echo json_encode(digifox_fixed_volume($status));
 ?>
