@@ -42,7 +42,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git rsync build-essential cmake device-tree-compiler bc binutils \
-            libncurses-dev clang libclang-dev file unzip cpio wget python3 patch perl
+            libncurses-dev clang libclang-dev file zip unzip cpio wget python3 patch perl
 
       - name: Build id
         id: ver
@@ -51,23 +51,55 @@ jobs:
                  ext_tree/board/luckfox/rootfs_overlay/var/www/config.php)
           echo "build=${base:-1.0}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Download cache
-        uses: actions/cache@v4
+      # caches are saved even if the build fails, so a re-run does not start from zero
+      - name: Restore download cache
+        uses: actions/cache/restore@v4
         with:
           path: buildroot/dl
-          key: dl-${{ hashFiles('ext_tree/configs/*_defconfig', 'ext_tree/package/**/*.mk') }}
+          key: dl-${{ github.run_id }}
           restore-keys: dl-
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.run_id }}
+          restore-keys: ccache-
+
+      - name: Enable ccache (CI only)
+        run: |
+          sed -i 's/^# BR2_CCACHE is not set$/BR2_CCACHE=y/' ext_tree/configs/luckfox_pico_max_defconfig
+          grep -n '^BR2_CCACHE=y' ext_tree/configs/luckfox_pico_max_defconfig
 
       - name: Build
         env:
           DIGIFOX_BUILD: ${{ steps.ver.outputs.build }}
+          BR2_CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: |
           # the default shell runs with -e -o pipefail: a failed build fails the step
           ./build.sh 2>&1 | tee build.log | grep --line-buffered -E '^>>> '
 
+      - name: Save download cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: buildroot/dl
+          key: dl-${{ github.run_id }}
+
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.run_id }}
+
+      # the error also goes to the run annotations (readable through the API)
       - name: Build log (on failure)
         if: failure()
-        run: tail -n 300 build.log
+        run: |
+          tail -n 300 build.log || true
+          msg=$(grep -E -i 'error|failed|\*\*\*' build.log | tail -n 40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=build failed::${msg}"
 
       - name: Upload log (on failure)
         if: failure()
@@ -79,12 +111,14 @@ jobs:
       - name: Package
         id: pkg
         run: |
+          trap 'echo "::error title=package::line $LINENO: $BASH_COMMAND"' ERR
           B=${{ steps.ver.outputs.build }}
           I=buildroot/output/images
           ls -la $I
+          echo "::notice title=images::$(ls -la $I | sed ':a;N;$!ba;s/\n/%0A/g')"
           mkdir -p release flash
-          for f in env.img idblock.img uboot.img boot.img rootfs.img; do
-            test -f $I/$f || { echo "missing $f"; exit 1; }
+          for f in env.img idblock.img uboot.img boot.img rootfs.img rootfs.squashfs; do
+            test -f $I/$f || { echo "::error title=package::missing $I/$f"; exit 1; }
           done
           # everything for RV1106_Toolkit except the update-only squashfs
           find $I -maxdepth 1 -type f ! -name 'rootfs.squashfs' -exec cp {} flash/ \;
