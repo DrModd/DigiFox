@@ -76,7 +76,7 @@ jobs:
           DIGIFOX_BUILD: ${{ steps.ver.outputs.build }}
           BR2_CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: |
-          # the default shell runs with -e -o pipefail: a failed build fails the step
+          set -o pipefail   # without it a failed build.sh is hidden by grep
           ./build.sh 2>&1 | tee build.log | grep --line-buffered -E '^>>> '
 
       - name: Save download cache
@@ -98,7 +98,7 @@ jobs:
         if: failure()
         run: |
           tail -n 300 build.log || true
-          msg=$(grep -E -i 'error|failed|\*\*\*' build.log | tail -n 40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          msg=$(tail -n 60 build.log | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::error title=build failed::${msg}"
 
       - name: Upload log (on failure)
