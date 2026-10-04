@@ -68,8 +68,6 @@ $services = [
     'shairport'   => 'shairport-sync',
     'spotify'     => 'librespot',
     'qobuz'       => 'qobuz-connect',
-    'celmusper'   => 'celmusper-trans',
-    'tidalconnect'=> 'tidalconnect',
 ];
 
 $status = [

@@ -1,7 +1,7 @@
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
-  <name>Qobuz Connect Static Proxy for PureFox</name>
+  <name>Qobuz Connect Static Proxy for DigiFox</name>
 
   <service-subset>
     <name replace-wildcards="yes">Service on %h</name>

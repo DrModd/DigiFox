@@ -121,18 +121,6 @@ rm -f $TARGET_DIR/lib/libgomp.so
 #    find $TARGET_DIR/usr/ap* -type f -size +500k -executable ! -name "*.so*" -exec upx --best --lzma {} \; 2>/dev/null || true
 #fi
 
-# Create SquashFS for Tidal libraries (MAX only - save rootfs space)
-if [ -d "$TARGET_DIR/usr/lib/tidal" ] && [ "$(ls -A $TARGET_DIR/usr/lib/tidal/*.so* 2>/dev/null)" ]; then
-    echo "Creating SquashFS image for Tidal..."
-    [ -x "$MKSQUASHFS" ] || {
-        echo "Host mksquashfs not found: $MKSQUASHFS" >&2
-        exit 1
-    }
-    rm -f $TARGET_DIR/usr/lib/tidal.sqfs
-    "$MKSQUASHFS" "$TARGET_DIR/usr/lib/tidal" "$TARGET_DIR/usr/lib/tidal.sqfs" -comp xz -b 256K -noappend
-    echo "Removing original Tidal directory from rootfs..."
-    rm -rf $TARGET_DIR/usr/lib/tidal/*
-fi
 
 
 

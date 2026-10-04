@@ -60,14 +60,7 @@ $players = [
     'lms'        => ['process' => 'squeezelite',     'script' => 'S95squeezelite'],
     'spotify'    => ['process' => 'librespot',       'script' => 'S95spotify'],
     'qobuz'      => ['process' => 'qobuz-connect',   'script' => 'S95qobuz'],
-    // Linux limits the process comm field to 15 characters.  BusyBox pidof
-    // and killall therefore see celmusper-transport as celmusper-trans.
-    'celmusper'  => ['process' => 'celmusper-trans', 'script' => 'S95celmusper', 'pidfile' => '/tmp/celmusper-transport.pid'],
 ];
-
-if (file_exists('/opt/tidal.sqfs')) {
-    $players['tidalconnect'] = ['process' => 'tidalconnect', 'script' => 'S95tidal'];
-}
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     fail("Invalid request method");
@@ -99,7 +92,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'celmusper-trans', 'tidalconnect', 'tc_volume', 'avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'avahi-publish-service']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');

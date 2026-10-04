@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio System Control</title>
+    <title>DigiFox</title>
     <link rel="stylesheet" href="assets/css/style.css?v=<?php echo time(); ?>">
 </head>
 <body>
@@ -39,10 +39,6 @@
     </div>
         <button class="btn-custom success" data-service="spotify" data-process="spotify">Spotify Connect</button>
         <button class="btn-custom success" data-service="qobuz" data-process="qobuz">Qobuz Connect</button>
-<!--	<button class="btn-custom success" data-service="celmusper" data-process="celmusper">CelMusper</button> -->
-	<?php if (file_exists('/opt/tidal.sqfs')): ?>
-                    <button class="btn-custom success" data-service="tidalconnect" data-process="tidalconnect">Tidal Connect</button>
-                    <?php endif; ?>
 	<button class="btn-custom usb2i2s<?php echo file_exists('/etc/usb_to_i2s.state') ? ' active' : ''; ?>" id="usbto-i2s-btn">USB to I2S</button>
 <!--	<button class="btn-custom usb2i2s" id="dlna-bridge-btn">
 	    DLNA Bridge
@@ -77,8 +73,8 @@
         <div class="power-controls">
             <button id="update-firmware" class="btn-custom danger firmware-btn">
                 <div class="firmware-text">
-                    <div class="firmware-title">PureFox v<?php echo VERSION; ?></div>
-                    <div class="firmware-subtitle">for LuckFox Pico MAX</div>
+                    <div class="firmware-title">DigiFox v<?php echo VERSION; ?></div>
+                    <div class="firmware-subtitle">DigiD D1 · LuckFox Pico MAX</div>
                 </div>
                 <img src="assets/img/firmware.svg" class="settings-icon firmware-icon" alt="Firmware">
             </button>

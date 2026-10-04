@@ -840,7 +840,7 @@ $(document).ready(function () {
         // Переключение сервиса
         
         // Увеличенный таймаут для сервисов с двухэтапным запуском
-        const timeoutDuration = (service === 'qobuz') ? 15000 : (service === 'tidalconnect') ? 12000 : 8000;
+        const timeoutDuration = (service === 'qobuz') ? 15000 : 8000;
         
 
         $.ajax({

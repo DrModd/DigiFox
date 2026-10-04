@@ -125,7 +125,6 @@ The inputs use internal pull-up resistors. Do not connect power to the encoder c
 - APScream (Diretta alternative)
 - Spotify Connect (librespot)
 - Qobuz Connect
-- Tidal Connect (test version only!)
 
 ## Repository Branches
 
