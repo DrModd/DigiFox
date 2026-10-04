@@ -31,28 +31,8 @@ ok()   { log "${GRN}OK:${RST} $*"; }
 warn() { log "${YLW}WARN:${RST} $*"; }
 fail() { log "${RED}${BLD}ERROR:${RST} $*"; exit 1; }
 
-# ── самообновление скрипта (как в update.sh) ──────────────────────
-SCRIPT_PATH="/opt/update_ap.sh"
-SCRIPT_NEW="/tmp/update_ap.sh.new"
-UPDATE_SRC="luckfox@luckfox.puredsd.ru::luckfox2/opt/update_ap.sh"
-
-if [ "$UPDATE_SELF_DONE" != "1" ]; then
-    if command -v sshpass >/dev/null 2>&1 && \
-       sshpass -p 'luckfox' rsync -aq --timeout=10 "$UPDATE_SRC" "$SCRIPT_NEW" 2>/dev/null && \
-       [ -f "$SCRIPT_NEW" ] && [ -s "$SCRIPT_NEW" ]; then
-        OLD_MD5=$(md5sum "$SCRIPT_PATH" 2>/dev/null | awk '{print $1}')
-        NEW_MD5=$(md5sum "$SCRIPT_NEW" 2>/dev/null | awk '{print $1}')
-        if [ "$OLD_MD5" != "$NEW_MD5" ]; then
-            log "${YLW}New version of update_ap.sh found, updating...${RST}"
-            chmod +x "$SCRIPT_NEW"
-            cp "$SCRIPT_NEW" "$SCRIPT_PATH"
-            rm -f "$SCRIPT_NEW"
-            export UPDATE_SELF_DONE=1
-            exec "$SCRIPT_PATH" "$@"
-        fi
-    fi
-    rm -f "$SCRIPT_NEW"
-fi
+# DigiFox: self-update of this script from the PureFox server is removed;
+# the script ships with the firmware. Players are still fetched from albumplayer.ru.
 
 # ── параметры продуктов ───────────────────────────────────────────
 

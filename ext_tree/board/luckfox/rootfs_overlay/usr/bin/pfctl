@@ -18,7 +18,8 @@
 #   @RATE <Гц> <формат>    — текущий поток, например: @RATE 192000 S32_LE
 #   @RATE DSD<N>           — DSD, например: @RATE DSD128
 #   @RATE STOP             — ничего не играет
-# В режиме serve @RATE также приходит сам при каждой смене потока.
+# В режиме serve @RATE также приходит сам при каждой смене потока
+# (DigiFox: от pfrate, в течение ~20 мс после открытия потока; STOP — через 0,4 с).
 #
 # Команды (регистр не важен, \r от МК отбрасывается):
 #   src <id>          naa raat mpd aprenderer aplayer apscream shairport lms
@@ -129,7 +130,14 @@ serve() {
     # фоновый наблюдатель: смена потока и запросы приложения к усилителю
     (
         last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""
+        # DigiFox: pfrate reports a new stream within ~20 ms (C, no forks);
+        # without it fall back to the shell poll below (~0.5 s)
+        PFRATE=""; [ -x /usr/bin/pfrate ] && PFRATE=1
+        rpid=""
         while true; do
+            if [ -n "$PFRATE" ] && { [ -z "$rpid" ] || ! kill -0 "$rpid" 2>/dev/null; }; then
+                /usr/bin/pfrate & rpid=$!
+            fi
             if [ -f /tmp/amp_req ]; then
                 req=$(cat /tmp/amp_req); rm -f /tmp/amp_req
                 case "$req" in
@@ -141,8 +149,10 @@ serve() {
             n=$((n + 1))
             if [ $n -ge 3 ]; then          # частоту — раз в ~0,5 с
                 n=0
-                cur=$(rate_now)
-                [ "$cur" != "$last" ] && echo "@RATE $cur" && last=$cur
+                if [ -z "$PFRATE" ]; then
+                    cur=$(rate_now)
+                    [ "$cur" != "$last" ] && echo "@RATE $cur" && last=$cur
+                fi
                 m=$((m + 1))
                 if [ $m -ge 2 ]; then      # плеер и режим USB — раз в ~1 с
                     m=0

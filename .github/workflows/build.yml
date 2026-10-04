@@ -1,0 +1,117 @@
+name: Build DigiFox
+
+# Every push to the digifox branch (or a manual run) builds the firmware with
+# Buildroot and publishes a GitHub release:
+#   DigiFox-<build>.zip   images for RV1106_Toolkit (env, idblock, uboot, boot, rootfs)
+#   rootfs.squashfs       root filesystem for the online update (/opt/update.sh)
+#   boot.img              kernel + DTB for the online update
+#   version.txt, SHA256SUMS
+# The newest release is "latest": the device updates from
+# https://github.com/DrModd/DigiFox/releases/latest/download/...
+
+on:
+  push:
+    branches: [ digifox ]
+    paths-ignore:
+      - '**.md'
+      - 'images/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-digifox
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost /usr/local/graalvm /usr/local/share/powershell
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git rsync build-essential cmake device-tree-compiler bc binutils \
+            libncurses-dev clang libclang-dev file unzip cpio wget python3 patch perl
+
+      - name: Build id
+        id: ver
+        run: |
+          base=$(sed -n "s/.*DIGIFOX_VERSION', '\([^']*\)'.*/\1/p" \
+                 ext_tree/board/luckfox/rootfs_overlay/var/www/config.php)
+          echo "build=${base:-1.0}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Download cache
+        uses: actions/cache@v4
+        with:
+          path: buildroot/dl
+          key: dl-${{ hashFiles('ext_tree/configs/*_defconfig', 'ext_tree/package/**/*.mk') }}
+          restore-keys: dl-
+
+      - name: Build
+        env:
+          DIGIFOX_BUILD: ${{ steps.ver.outputs.build }}
+        run: |
+          # the default shell runs with -e -o pipefail: a failed build fails the step
+          ./build.sh 2>&1 | tee build.log | grep --line-buffered -E '^>>> '
+
+      - name: Build log (on failure)
+        if: failure()
+        run: tail -n 300 build.log
+
+      - name: Upload log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Package
+        id: pkg
+        run: |
+          B=${{ steps.ver.outputs.build }}
+          I=buildroot/output/images
+          ls -la $I
+          mkdir -p release flash
+          for f in env.img idblock.img uboot.img boot.img rootfs.img; do
+            test -f $I/$f || { echo "missing $f"; exit 1; }
+          done
+          # everything for RV1106_Toolkit except the update-only squashfs
+          find $I -maxdepth 1 -type f ! -name 'rootfs.squashfs' -exec cp {} flash/ \;
+          (cd flash && zip -q -9 ../release/DigiFox-$B.zip *)
+          cp $I/rootfs.squashfs $I/boot.img release/
+          echo "$B" > release/version.txt
+          (cd release && sha256sum DigiFox-$B.zip rootfs.squashfs boot.img > SHA256SUMS)
+          ls -la release
+          cat release/SHA256SUMS
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.build }}
+          name: DigiFox ${{ steps.ver.outputs.build }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            DigiFox ${{ steps.ver.outputs.build }} (commit ${{ github.sha }})
+
+            Прошивка через RV1106_Toolkit: распакуйте `DigiFox-${{ steps.ver.outputs.build }}.zip`,
+            Download → USB → папка с файлами → отметить все → Download.
+
+            Онлайн-обновление: кнопка с номером версии в веб-интерфейсе (берёт rootfs.squashfs и boot.img отсюда).
+          files: |
+            release/DigiFox-${{ steps.ver.outputs.build }}.zip
+            release/rootfs.squashfs
+            release/boot.img
+            release/version.txt
+            release/SHA256SUMS

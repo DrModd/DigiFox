@@ -1,0 +1,5 @@
+config BR2_PACKAGE_PFRATE
+	bool "pfrate"
+	help
+	  DigiFox: instant stream rate/format reports (@RATE) for the
+	  DigiD D1 amplifier, started by "pfctl serve" on the console UART.

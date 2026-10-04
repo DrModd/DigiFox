@@ -121,9 +121,7 @@ rm -f $TARGET_DIR/lib/libgomp.so
 #    find $TARGET_DIR/usr/ap* -type f -size +500k -executable ! -name "*.so*" -exec upx --best --lzma {} \; 2>/dev/null || true
 #fi
 
-
-
-
-
-
-
+# DigiFox build id: shown in the web UI and used by /opt/update.sh.
+# CI sets DIGIFOX_BUILD (e.g. 1.0.12); a local build gets 1.0-local-<date>.
+DIGIFOX_BASE=$(sed -n "s/.*DIGIFOX_VERSION', '\([^']*\)'.*/\1/p" "$TARGET_DIR/var/www/config.php")
+echo "${DIGIFOX_BUILD:-${DIGIFOX_BASE:-1.0}-local-$(date +%Y%m%d%H%M)}" > "$TARGET_DIR/etc/digifox-release"
