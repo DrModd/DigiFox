@@ -17,7 +17,7 @@ define DIGIFOX_SRC_BUILD_CMDS
 		-o $(@D)/digifox-srcbench $(@D)/srcbench.c $(@D)/dsd2pcm.c -lsoxr -lm
 	$(TARGET_CC) $(DIGIFOX_SRC_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s \
 		-DPIC -o $(@D)/libasound_module_pcm_digifox.so \
-		$(@D)/pcm_digifox.c $(@D)/dsd2pcm.c -lasound -lsoxr -lm
+		$(@D)/pcm_digifox.c $(@D)/dsd2pcm.c -lasound -lsoxr -lm -lpthread
 endef
 
 define DIGIFOX_SRC_INSTALL_TARGET_CMDS
