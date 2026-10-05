@@ -98,6 +98,7 @@ typedef struct {
      * slave made the player spin at real-time priority whenever the I2S had
      * room but the ring did not — starving the USB driver on the single core. */
     int          efd, ev_set;
+    int          kfd;               /* eventfd: wake the pump thread         */
 } dfx_t;
 
 /* ------------------------------------------------------------ helpers */
@@ -382,6 +383,22 @@ static void pump(dfx_t *d)
     signal_ready(d);
 }
 
+/* From the player's calls: never convert here. The USB router runs at
+ * SCHED_FIFO 70, above the kernel's IRQ threads (50); converting in its
+ * context kept the USB driver from taking packets (0.7 % of the audio lost).
+ * Only wake the pump thread (FIFO 45, below the IRQ threads). */
+static void poke(dfx_t *d)
+{
+    if (d->thr_ok && d->kfd >= 0) {
+        uint64_t one = 1;
+        if (write(d->kfd, &one, sizeof one) < 0) {}
+        if (d->running && d->st) update_played(d);
+        signal_ready(d);
+    } else {
+        pump(d);                     /* no thread: do it here */
+    }
+}
+
 /* move data: staging -> slave, ring -> staging. Never blocks. */
 static void pump_core(dfx_t *d)
 {
@@ -398,7 +415,7 @@ static void pump_core(dfx_t *d)
 
 /* ------------------------------------------------------------ callbacks */
 
-static int dfx_hw_params(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params)
+static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params)
 {
     dfx_t *d = io->private_data;
     (void)params;
@@ -508,7 +525,7 @@ static int dfx_start(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
     d->running = 1;
-    pump(d);
+    poke(d);
     return 0;
 }
 
@@ -530,7 +547,7 @@ static int dfx_pause(snd_pcm_ioplug_t *io, int enable)
         if (snd_pcm_state(d->slave) == SND_PCM_STATE_PAUSED) snd_pcm_pause(d->slave, 0);
         else snd_pcm_prepare(d->slave);
         d->running = 1;
-        pump(d);
+        poke(d);
     }
     return 0;
 }
@@ -554,7 +571,7 @@ static snd_pcm_sframes_t dfx_transfer(snd_pcm_ioplug_t *io, const snd_pcm_channe
         d->wpos += n;
         left -= n;
     }
-    pump(d);
+    poke(d);
     return size;
 }
 
@@ -564,7 +581,7 @@ static snd_pcm_sframes_t dfx_transfer(snd_pcm_ioplug_t *io, const snd_pcm_channe
 static snd_pcm_sframes_t dfx_pointer(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
-    pump(d);
+    poke(d);
     if (d->running) update_played(d);
     d->ptr_last = d->played;
     d->since_ptr = 0;
@@ -642,7 +659,7 @@ static int dfx_poll_revents(snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned i
 {
     dfx_t *d = io->private_data;
     (void)pfd; (void)nfds;
-    pump(d);
+    poke(d);
     snd_pcm_uframes_t free_ = io->buffer_size - (snd_pcm_uframes_t)(d->wpos - d->played);
     unsigned short ev = free_ >= io->period_size ? POLLOUT : 0;
     /* a slave that is broken for good must not leave the player waiting */
@@ -663,6 +680,7 @@ static int dfx_close(snd_pcm_ioplug_t *io)
     }
     pthread_mutex_destroy(&d->lock);
     if (d->efd >= 0) close(d->efd);
+    if (d->kfd >= 0) close(d->kfd);
     free_conv(d);
     if (d->slave) snd_pcm_close(d->slave);
     free(d->slave_name);
@@ -701,19 +719,23 @@ static void *pump_thread(void *arg)
                 }
             }
         }
-        int nf = 0, progress = 0, active = d->running && d->st;
+        int nf = 0, active = d->running && d->st;
         if (active) {
-            uint64_t h0 = d->hw; unsigned long w0 = d->writes;
             pump(d);
-            progress = d->hw != h0 || d->writes != w0;
-            if (progress && snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING)
-                nf = snd_pcm_poll_descriptors(d->slave, pfd, 8);
+            /* data waiting for room in the I2S buffer: also wake on the slave */
+            int waiting = d->wpos != d->hw || d->st_len - d->st_pos >= d->s_period;
+            if (waiting && snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING)
+                nf = snd_pcm_poll_descriptors(d->slave, pfd, 7);
+            if (nf < 0) nf = 0;
         }
         pthread_mutex_unlock(&d->lock);
-        /* slave full: sleep until it has room; otherwise (waiting for the
-         * player) look again in 2 ms — far inside the 85 ms buffer; idle: 20 ms */
-        if (nf > 0) poll(pfd, nf, 20);
-        else usleep(active ? 2000 : 20000);
+        /* sleep until the player writes (kick), the I2S has room, or 20 ms */
+        pfd[nf].fd = d->kfd;
+        pfd[nf].events = POLLIN;
+        pfd[nf].revents = 0;
+        poll(pfd, nf + 1, active ? 20 : 50);
+        uint64_t v;
+        if (read(d->kfd, &v, sizeof v) < 0) {}
     }
     return NULL;
 }
@@ -732,7 +754,21 @@ LOCKED(int, dfx_stop, (snd_pcm_ioplug_t *io), (io))
 LOCKED(snd_pcm_sframes_t, dfx_pointer, (snd_pcm_ioplug_t *io), (io))
 LOCKED(snd_pcm_sframes_t, dfx_transfer, (snd_pcm_ioplug_t *io, const snd_pcm_channel_area_t *a,
        snd_pcm_uframes_t o, snd_pcm_uframes_t n), (io, a, o, n))
-LOCKED(int, dfx_hw_params, (snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *p), (io, p))
+LOCKED(int, dfx_hw_params_inner, (snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *p), (io, p))
+
+/* Building the filters (soxr, DSD decimator) takes tens of ms on the Fox.
+ * The USB router calls this at SCHED_FIFO 70 — above the USB driver — so
+ * drop to normal priority for the setup and restore afterwards. */
+static int dfx_hw_params_l(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *p)
+{
+    int pol;
+    struct sched_param sp, normal = { .sched_priority = 0 };
+    int rt = pthread_getschedparam(pthread_self(), &pol, &sp) == 0 && pol != SCHED_OTHER;
+    if (rt) pthread_setschedparam(pthread_self(), SCHED_OTHER, &normal);
+    int r = dfx_hw_params_inner_l(io, p);
+    if (rt) pthread_setschedparam(pthread_self(), pol, &sp);
+    return r;
+}
 LOCKED(int, dfx_hw_free, (snd_pcm_ioplug_t *io), (io))
 LOCKED(int, dfx_prepare, (snd_pcm_ioplug_t *io), (io))
 LOCKED(int, dfx_pause, (snd_pcm_ioplug_t *io, int e), (io, e))
@@ -812,6 +848,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     }
 
     d->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    d->kfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     d->ev_set = 0;
     pthread_mutex_init(&d->lock, NULL);
     d->thr_ok = pthread_create(&d->thr, NULL, pump_thread, d) == 0;
