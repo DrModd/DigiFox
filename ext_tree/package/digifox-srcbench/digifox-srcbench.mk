@@ -11,8 +11,8 @@ DIGIFOX_SRCBENCH_LICENSE = GPL-2.0+
 DIGIFOX_SRCBENCH_DEPENDENCIES = libsoxr
 
 define DIGIFOX_SRCBENCH_BUILD_CMDS
-	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O2 -mfpu=neon-vfpv4 -Wall -s \
-		-o $(@D)/digifox-srcbench $(@D)/srcbench.c -lsoxr -lm
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -O3 -ffast-math -mfpu=neon-vfpv4 -Wall -s \
+		-o $(@D)/digifox-srcbench $(@D)/srcbench.c $(@D)/dsd2pcm.c -lsoxr -lm
 endef
 
 define DIGIFOX_SRCBENCH_INSTALL_TARGET_CMDS

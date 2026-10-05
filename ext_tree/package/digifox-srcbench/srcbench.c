@@ -4,8 +4,8 @@
  * Measures, on one core, the share of real time needed to
  *   - resample PCM stereo 44.1 … 768 kHz to 192 kHz with soxr (HQ and VHQ),
  *     32-bit integer in and out, as the ALSA path would do;
- *   - convert DSD64 … DSD512 to PCM: FIR decimation to 352.8 kHz
- *     (table lookup per 8 DSD bits) + soxr 352.8 -> 192 kHz.
+ *   - convert DSD64 … DSD512 to PCM: multi-stage decimation to 352.8 kHz
+ *     (dsd2pcm.c: table FIR + half-bands) + soxr 352.8 -> 192 kHz.
  * 100 % = one core fully busy in real time. The player itself (Qobuz,
  * Roon, ...) and the system need their own share on top, so for steady
  * playback a figure below ~50 % is comfortable.
@@ -23,6 +23,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <soxr.h>
+#include "dsd2pcm.h"
 
 #define OUT_RATE   192000.0
 #define CH         2
@@ -98,95 +99,23 @@ static double bench_pcm(double in_rate, unsigned long quality, double seconds, c
 
 /* ------------------------------------------------------------------ DSD */
 
-/* DSD -> PCM 352.8 kHz by FIR decimation. Taps grouped by 8: for each group
- * a 256-entry table holds the sum of the 8 taps for every bit pattern, so one
- * output sample costs taps/8 lookups. Low-pass at ~80 kHz, Kaiser window. */
-typedef struct {
-    int taps, groups, decim_bytes;
-    float *lut;             /* groups * 256 */
-    uint8_t *hist[CH];      /* last `groups` bytes per channel, ring */
-    int pos;
-} dsd_dec_t;
-
-static double bessel_i0(double x)
+/* DSD -> PCM 352.8 kHz (dsd2pcm.c, multi-stage) -> soxr -> 192 kHz.
+ * dec_pct gets the share of the decimator alone. */
+static double bench_dsd(int mult, unsigned long quality, double seconds, const char **engine, double *dec_pct)
 {
-    double s = 1, t = 1;
-    for (int k = 1; k < 30; k++) { t *= (x / (2 * k)) * (x / (2 * k)); s += t; }
-    return s;
-}
-
-static void dsd_init(dsd_dec_t *d, int dsd_mult)
-{
-    double fs = 2822400.0 * dsd_mult / 64.0;          /* DSD bit rate */
-    int decim = (int)(fs / 352800.0 + 0.5);            /* 8, 16, 32, 64 */
-    d->taps = 16 * decim;
-    d->groups = d->taps / 8;
-    d->decim_bytes = decim / 8;
-    d->lut = calloc((size_t)d->groups * 256, sizeof(float));
-    double *h = malloc(sizeof(double) * d->taps), sum = 0, beta = 8.0, fc = 80000.0 / fs;
-    for (int i = 0; i < d->taps; i++) {
-        double m = i - (d->taps - 1) / 2.0, r = 2.0 * i / (d->taps - 1) - 1.0;
-        double sinc = m == 0 ? 2 * fc : sin(2 * M_PI * fc * m) / (M_PI * m);
-        h[i] = sinc * bessel_i0(beta * sqrt(1 - r * r)) / bessel_i0(beta);
-        sum += h[i];
-    }
-    for (int g = 0; g < d->groups; g++)
-        for (int b = 0; b < 256; b++) {
-            double acc = 0;
-            for (int k = 0; k < 8; k++)                /* MSB first, as in DSD */
-                acc += ((b >> (7 - k)) & 1 ? 1.0 : -1.0) * h[g * 8 + k] / sum;
-            d->lut[g * 256 + b] = (float)acc;
-        }
-    free(h);
-    for (int c = 0; c < CH; c++) d->hist[c] = calloc((size_t)d->groups, 1);
-    d->pos = 0;
-}
-
-static void dsd_free(dsd_dec_t *d)
-{
-    free(d->lut);
-    for (int c = 0; c < CH; c++) free(d->hist[c]);
-}
-
-/* in: planar DSD bytes per channel, `nbytes` each; out: interleaved float */
-static size_t dsd_run(dsd_dec_t *d, uint8_t *const in[CH], size_t nbytes, float *out)
-{
-    size_t n = 0;
-    for (size_t i = 0; i + d->decim_bytes <= nbytes; i += d->decim_bytes) {
-        for (int k = 0; k < d->decim_bytes; k++) {
-            for (int c = 0; c < CH; c++) d->hist[c][d->pos] = in[c][i + k];
-            if (++d->pos == d->groups) d->pos = 0;
-        }
-        for (int c = 0; c < CH; c++) {
-            const uint8_t *hb = d->hist[c];
-            const float *lut = d->lut;
-            float acc = 0;
-            int p = d->pos;
-            for (int g = 0; g < d->groups; g++) {
-                acc += lut[g * 256 + hb[p]];
-                if (++p == d->groups) p = 0;
-            }
-            out[n * CH + c] = acc;
-        }
-        n++;
-    }
-    return n;
-}
-
-static double bench_dsd(int mult, unsigned long quality, double seconds, const char **engine)
-{
-    dsd_dec_t d;
-    dsd_init(&d, mult);
+    dsd2pcm_t *d[CH];
+    for (int c = 0; c < CH; c++) d[c] = dsd2pcm_new(mult);
+    if (!d[0] || !d[1]) { fprintf(stderr, "dsd2pcm_new\n"); return -1; }
 
     soxr_error_t err = NULL;
     soxr_io_spec_t io = soxr_io_spec(SOXR_FLOAT32_I, SOXR_INT32_I);
     soxr_quality_spec_t q = soxr_quality_spec(quality, 0);
     soxr_runtime_spec_t rt = soxr_runtime_spec(1);
-    soxr_t s = soxr_create(352800.0, OUT_RATE, CH, &err, &io, &q, &rt);
-    if (!s || err) { fprintf(stderr, "soxr_create: %s\n", err ? err : "?"); dsd_free(&d); return -1; }
+    soxr_t s = soxr_create(DSD2PCM_RATE, OUT_RATE, CH, &err, &io, &q, &rt);
+    if (!s || err) { fprintf(stderr, "soxr_create: %s\n", err ? err : "?"); return -1; }
     *engine = soxr_engine(s);
 
-    double byte_rate = 2822400.0 * mult / 64.0 / 8.0;     /* per channel */
+    double byte_rate = 44100.0 * mult / 8.0;              /* per channel */
     size_t chunk = 8192;                                  /* bytes per channel per step */
     uint8_t *in[CH];
     srand(1);
@@ -194,29 +123,34 @@ static double bench_dsd(int mult, unsigned long quality, double seconds, const c
         in[c] = malloc(chunk);
         for (size_t i = 0; i < chunk; i++) in[c][i] = (uint8_t)(rand() & 0xFF);
     }
-    size_t pcm_cap = chunk / d.decim_bytes + 16;
+    size_t pcm_cap = chunk * 2 + 64;
     float *pcm = malloc(sizeof(float) * CH * pcm_cap);
-    size_t out_cap = (size_t)(pcm_cap * OUT_RATE / 352800.0) + 256;
+    size_t out_cap = (size_t)(pcm_cap * OUT_RATE / DSD2PCM_RATE) + 256;
     int32_t *out = malloc(sizeof(int32_t) * CH * out_cap);
 
     size_t total = (size_t)(byte_rate * seconds), done = 0;
-    double cpu = 0;
+    double cpu = 0, dec = 0;
     while (done < total) {
         double c0 = cpu_now();
-        size_t np = dsd_run(&d, in, chunk, pcm), off = 0;
+        size_t np = 0;
+        for (int c = 0; c < CH; c++) np = dsd2pcm_run(d[c], in[c], chunk, pcm + c, CH);
+        double c1 = cpu_now();
+        size_t off = 0;
         while (off < np) {
             size_t idone = 0, odone = 0;
             soxr_process(s, pcm + off * CH, np - off, &idone, out, out_cap, &odone);
             if (!idone) break;
             off += idone;
         }
-        cpu += cpu_now() - c0;
+        double c2 = cpu_now();
+        cpu += c2 - c0;
+        dec += c1 - c0;
         done += chunk;
     }
     soxr_delete(s);
-    dsd_free(&d);
-    for (int c = 0; c < CH; c++) free(in[c]);
+    for (int c = 0; c < CH; c++) { dsd2pcm_free(d[c]); free(in[c]); }
     free(pcm); free(out);
+    *dec_pct = 100.0 * dec / seconds;
     return 100.0 * cpu / seconds;
 }
 
@@ -255,15 +189,24 @@ int main(int argc, char **argv)
         fflush(stdout);
     }
     static const int dsd[] = { 64, 128, 256, 512 };
+    double dec[4];
     for (unsigned i = 0; i < sizeof dsd / sizeof dsd[0]; i++) {
         char name[16];
+        double d1, d2;
         snprintf(name, sizeof name, "DSD%d", dsd[i]);
-        double hq = bench_dsd(dsd[i], SOXR_HQ, sec, &eng);
-        double vhq = bench_dsd(dsd[i], SOXR_VHQ, sec, &eng);
+        double hq = bench_dsd(dsd[i], SOXR_HQ, sec, &eng, &d1);
+        double vhq = bench_dsd(dsd[i], SOXR_VHQ, sec, &eng, &d2);
+        dec[i] = (d1 + d2) / 2;
         row(name, hq, vhq);
         fflush(stdout);
     }
-    printf("\nДвижок soxr: %s. Время теста: %.0f с.\n", eng, wall_now() - w0);
-    printf("192 кГц не пересчитывается (идёт как есть). DSD: КИХ-фильтр до 352,8 кГц + soxr.\n");
+    printf("\n  из них дециматор DSD: DSD64 %.1f %%, DSD128 %.1f %%, DSD256 %.1f %%, DSD512 %.1f %%\n",
+           dec[0], dec[1], dec[2], dec[3]);
+
+    const char *e_hq = "?", *e_vhq = "?";
+    bench_pcm(44100, SOXR_HQ, 1, &e_hq);
+    bench_pcm(44100, SOXR_VHQ, 1, &e_vhq);
+    printf("\nДвижок soxr: HQ — %s, VHQ — %s. Время теста: %.0f с.\n", e_hq, e_vhq, wall_now() - w0);
+    printf("192 кГц не пересчитывается (идёт как есть). DSD: многоступенчатый дециматор до 352,8 кГц + soxr.\n");
     return 0;
 }
