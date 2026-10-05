@@ -7,7 +7,8 @@
 //   POST action=power      -> включить / выключить усилитель (дежурный режим)
 // DigiFox:
 //   GET ?full=1  -> ещё cfg{filter,delay,dsdgain,standby,autoon,mode}, ver, now,
-//                   tz, sleep_left (с), alarm{on,time,days,src,vol}
+//                   tz, sleep_left (с), alarm{on,time,days,src,vol},
+//                   fw_builtin (версия, встроенная в DigiFox), fw_update (она новее)
 //   POST action=set&key=K&val=V    -> настройка усилителя (@ASET); vmax/von — положение 0..max
 //   POST action=sleep&min=N        -> таймер сна, 0 — отменить
 //   POST action=alarm&on=&time=&days=&src=&vol=  -> будильник
@@ -151,6 +152,10 @@ if (isset($_GET['full'])) {
     }
     $v = trim((string)@file_get_contents('/tmp/amp_ver'));
     $out['ver'] = $v !== '' ? $v : null;
+    // прошивка усилителя, встроенная в DigiFox: предложить, если новее установленной
+    $bv = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.ver'));
+    $out['fw_builtin'] = $bv !== '' ? $bv : null;
+    $out['fw_update'] = $bv !== '' && $st !== null && ($v === '' || version_compare($bv, $v, '>'));
     $tz = tz_get($tz_file);
     $out['tz'] = $tz;
     $out['now'] = trim((string)shell_exec('TZ=' . escapeshellarg($tz) . ' date +%H:%M'));

@@ -119,6 +119,10 @@
         // firmware
         $('fw-ver').textContent = S && S.ver ? 'версия ' + S.ver : (amp ? 'версия до 1.1' : '');
         $('fw-go').disabled = flashing || !$('fw-file').files.length;
+        var bi = $('fw-builtin');
+        bi.hidden = !(S && S.fw_update);
+        if (S && S.fw_builtin) bi.textContent = 'ОБНОВИТЬ УСИЛИТЕЛЬ ДО ' + S.fw_builtin;
+        bi.disabled = flashing;
     }
 
     function refresh() {
@@ -177,16 +181,18 @@
     }
 
     // ---------------- firmware ----------------
-    function flash() {
+    function flash(builtin) {
         var f = $('fw-file').files[0];
-        if (!f || flashing) return;
-        if (!/\.bin$/i.test(f.name)) { status('Нужен файл .bin'); return; }
+        if (builtin !== true) {
+            if (!f || flashing) return;
+            if (!/\.bin$/i.test(f.name)) { status('Нужен файл .bin'); return; }
+        } else if (flashing) return;
         flashing = true; render();
         var log = $('fw-log');
         log.hidden = false; log.textContent = '';
         status('Прошивка усилителя… не выключайте питание', true);
         var fd = new FormData();
-        fd.append('fw', f);
+        if (builtin === true) fd.append('builtin', '1'); else fd.append('fw', f);
         fetch('amp_flash.php', { method: 'POST', body: fd }).then(function (r) {
             if (!r.body || !r.body.getReader) return r.text().then(function (t) { log.textContent = t; });
             var rd = r.body.getReader(), dec = new TextDecoder();
@@ -250,6 +256,9 @@
             render();
         });
         $('fw-go').addEventListener('click', flash);
+        $('fw-builtin').addEventListener('click', function () {
+            if (S && confirm('Обновить прошивку усилителя до ' + S.fw_builtin + '? Около минуты усилитель будет выключен.')) flash(true);
+        });
 
         showVol();
         render();

@@ -127,6 +127,7 @@
     <!-- Firmware -->
     <section class="panel">
         <div class="set-head"><div class="cap grow">ПРОШИВКА УСИЛИТЕЛЯ</div><div class="set-val" id="fw-ver"></div></div>
+        <button class="hifi wide on" id="fw-builtin" hidden></button>
         <label class="file" for="fw-file"><span id="fw-name">Выбрать файл .bin…</span></label>
         <input type="file" id="fw-file" accept=".bin,application/octet-stream" hidden>
         <button class="hifi wide" id="fw-go" disabled>ПРОШИТЬ</button>
