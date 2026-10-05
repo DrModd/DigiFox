@@ -25,6 +25,7 @@
         askUpdate: 'Проверить и установить обновление DigiFox с GitHub? Во время обновления звук прервётся, затем Фокс перезагрузится.',
         askReboot: 'Перезагрузить Фокс?', rebooting: 'Перезагрузка Фокса…', back: 'Фокс снова на связи',
         updStart: 'Запуск обновления…\n', updLost: '\n[связь прервалась — если Фокс перезагружается, страница обновится сама]\n',
+        ui_aplayer: 'СТАНЦИИ ВЕБ-РАДИО ↗', ui_aprenderer: 'НАСТРОЙКИ UPnP-РЕНДЕРЕРА ↗',
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
@@ -37,6 +38,7 @@
         m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics',
         askRestore: 'Restore settings from “%s”? The Fox will reboot.', restoreFail: 'Restore failed: ',
         m_classic: 'Classic PureFox interface',
+        ui_aplayer: 'WEB RADIO STATIONS ↗', ui_aprenderer: 'UPnP RENDERER SETTINGS ↗',
         noPlayer: 'No player', on: 'On', standby: 'Standby',
         noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected (UART) — volume is set only by the amplifier',
         ampStandby: 'Amplifier is in standby',
@@ -221,6 +223,13 @@
             var id = btns[i].getAttribute('data-id');
             btns[i].className = 'hifi' + (S.usb === false && S.service === id ? ' on' : '');
             btns[i].disabled = !idle;
+        }
+        // own web pages of APlayer (stations) and APrenderer — they work while the player runs
+        var ui = $('player-ui'), port = { aplayer: 7778, aprenderer: 7779 }[S.service];
+        ui.hidden = !(S.usb === false && port);
+        if (!ui.hidden) {
+            ui.href = 'http://' + location.hostname + ':' + port + '/';
+            ui.textContent = T['ui_' + S.service];
         }
     }
 

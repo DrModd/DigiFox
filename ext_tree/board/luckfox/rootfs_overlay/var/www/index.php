@@ -72,6 +72,7 @@
     <section class="panel">
         <div class="cap" data-t="players">ПЛЕЕРЫ</div>
         <div class="grid" id="players"></div>
+        <a class="hifi player-ui" id="player-ui" target="_blank" rel="noopener" hidden></a>
     </section>
 
     <footer class="foot" id="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>

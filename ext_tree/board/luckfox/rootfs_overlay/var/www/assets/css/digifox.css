@@ -241,6 +241,8 @@ input[type=range]:disabled::-moz-range-progress { background: var(--faint); }
     gap: 8px;
     margin-top: 10px;
 }
+.player-ui { display: block; margin-top: 8px; text-align: center; text-decoration: none; }
+.player-ui[hidden] { display: none; }
 .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
