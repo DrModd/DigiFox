@@ -29,8 +29,42 @@
         outputHint: 'STD — stereo; 8CH — 8 channels up to 192 kHz; L/R — dual mono; ±L/±R — dual mono, balanced. Applied at once.',
         pcmSwap: 'PCM channels', pcmSwapD: 'Swap left and right',
         dsdSwap: 'DSD channels', dsdSwapD: 'Swap the physical DSD lines',
-        freqSwap: '44.1 / 48 families', freqSwapD: 'Swap the 44.1 and 48 kHz frequency domains'
+        freqSwap: '44.1 / 48 families', freqSwapD: 'Swap the 44.1 and 48 kHz frequency domains',
+        src: 'SAMPLE-RATE CONVERSION', srcFox: 'FOX',
+        srcHint: 'AK4137 — the Fox sends audio as is, the AK4137 in the amplifier converts it. FOX — the Fox converts everything to PCM 192 kHz / 32 bit itself: PCM with soxr, DSD64–DSD256 with a decimator; DSD512 is not supported in this mode. Switching restarts the player.'
     };
+    var SRC_NAME = RU ? { ak4137: 'в усилителе', fox: 'на Фоксе, 192 кГц' } : { ak4137: 'in the amplifier', fox: 'on the Fox, 192 kHz' };
+    var srcMode = null, srcBusy = false;
+
+    function renderSrc() {
+        var b = document.querySelectorAll('[data-src]');
+        for (var i = 0; i < b.length; i++) {
+            var v = b[i].getAttribute('data-src');
+            b[i].className = 'hifi' + (srcMode === v ? ' on' : '');
+            b[i].disabled = !srcMode || srcBusy || busy;
+        }
+        var el = document.getElementById('v-src');
+        if (el) el.textContent = srcMode ? SRC_NAME[srcMode] : '';
+    }
+
+    function loadSrc(resp) {
+        return (resp || fetch('src.php', { cache: 'no-store' })).then(function (r) {
+            return r.json().then(function (j) {
+                if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                srcMode = j.mode; renderSrc();
+            });
+        });
+    }
+
+    function applySrc(v) {
+        if (srcBusy || !srcMode || v === srcMode) return;
+        srcBusy = true; renderSrc(); status(T.applying, true);
+        loadSrc(fetch('src.php', {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'mode=' + encodeURIComponent(v)
+        })).then(function () { status(T.saved); }, function (e) { status(e.message || 'Ошибка'); })
+          .then(function () { srcBusy = false; renderSrc(); });
+    }
 
     function $(id) { return document.getElementById(id); }
     var cfg = null, usb = false, busy = false, msgTimer = null, fixingSub = false;
@@ -159,8 +193,13 @@
             });
         }
         $('reboot-btn').addEventListener('click', reboot);
+        var sb = document.querySelectorAll('[data-src]');
+        for (var s = 0; s < sb.length; s++) {
+            sb[s].addEventListener('click', function () { applySrc(this.getAttribute('data-src')); });
+        }
         render();
         load();
+        loadSrc().catch(function () {});
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -31,6 +31,17 @@
 /* ── Device constants ─────────────────────────────────────────────── */
 
 #define I2S_CARD        "hw:0,0"
+/* DigiFox: with "digifox-srcmode fox" the stream goes through the ALSA
+ * plugin "digifox" (PCM 192 kHz on the I2S port, AK4137 not needed).
+ * Read on every stream start, so switching needs no restart. */
+#define SRCMODE_FILE    "/etc/digifox/srcmode"
+
+static const char *i2s_device(void) {
+    char m[16] = "";
+    FILE *f = fopen(SRCMODE_FILE, "r");
+    if (f) { if (!fgets(m, sizeof m, f)) m[0] = 0; fclose(f); }
+    return strncmp(m, "fox", 3) == 0 ? "digifox" : I2S_CARD;
+}
 #define SYSFS_UAC2_PATH "/sys/class/u_audio"
 #define SYSFS_RATE_FILE      "rate"
 #define SYSFS_FORMAT_FILE    "format"
@@ -247,7 +258,7 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
         return -1;
 
     /* I2S playback — DSD_U32_LE for DSD, S32_LE for PCM */
-    if (setup_pcm(&pcm_playback, I2S_CARD, SND_PCM_STREAM_PLAYBACK,
+    if (setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
                   lrck_rate, i2s_format, I2S_CHANNELS, is_dsd) < 0) {
         close_pcms();
         return -1;

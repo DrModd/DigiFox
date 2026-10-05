@@ -19,11 +19,17 @@
 
 typedef struct dsd2pcm dsd2pcm_t;
 
-/* dsd_mult: 64, 128, 256, 512 */
+/* dsd_mult: 64, 128, 256, 512; base 44100 (DSD64 = 2.8224 MHz) */
 dsd2pcm_t *dsd2pcm_new(int dsd_mult);
+/* same for any base rate: 44100 or 48000 (DSD64 = 3.072 MHz -> 384 kHz out) */
+dsd2pcm_t *dsd2pcm_new_base(int base_rate, int dsd_mult);
+/* output rate: base * 8 (352800 or 384000) */
+unsigned   dsd2pcm_out_rate(const dsd2pcm_t *d);
+/* forget the history (new stream) */
+void       dsd2pcm_reset(dsd2pcm_t *d);
 void       dsd2pcm_free(dsd2pcm_t *d);
 
-/* Bytes per channel per output sample at 352.8 kHz (DSD64 0.5 ... DSD512 4),
+/* Bytes per channel per output sample (DSD64 1 ... DSD512 8),
  * times 2 = bytes consumed per output frame. */
 double     dsd2pcm_bytes_per_frame(const dsd2pcm_t *d);
 

@@ -31,6 +31,7 @@ typedef struct {
 } halfband_t;
 
 struct dsd2pcm {
+    int      base;             /* 44100 or 48000                              */
     int      mult;             /* 64, 128, 256, 512                           */
     int      groups;           /* lookups (bytes) per stage-1 output          */
     int      dbytes;           /* bytes per stage-1 output (1)                */
@@ -131,9 +132,18 @@ static size_t hb_run(halfband_t *b, const float *in, size_t n, float *out)
 
 dsd2pcm_t *dsd2pcm_new(int mult)
 {
+    return dsd2pcm_new_base(44100, mult);
+}
+
+dsd2pcm_t *dsd2pcm_new_base(int base, int mult)
+{
     if (mult != 64 && mult != 128 && mult != 256 && mult != 512) return NULL;
+    if (base != 44100 && base != 48000) return NULL;
     dsd2pcm_t *d = calloc(1, sizeof *d);
     if (!d) return NULL;
+    d->base = base;
+    /* filters are designed for the 44.1k family; the 48k family is the same
+     * filter at a 48/44.1 higher clock (pass band 0..104 kHz, still fine) */
     double fd = 44100.0 * mult;
     double r1 = fd / 8;                            /* 352.8k .. 2822.4k */
     d->mult = mult;
@@ -163,7 +173,7 @@ dsd2pcm_t *dsd2pcm_new(int mult)
     memset(d->sym, 0x69, d->groups - 1);
 
     double r = r1;
-    while (r > DSD2PCM_RATE + 1 && d->nhb < MAX_HB) {
+    while (r > 352800 + 1 && d->nhb < MAX_HB) {
         if (hb_init(&d->hb[d->nhb], r)) { dsd2pcm_free(d); return NULL; }
         d->nhb++;
         r /= 2;
@@ -181,7 +191,23 @@ void dsd2pcm_free(dsd2pcm_t *d)
 
 double dsd2pcm_bytes_per_frame(const dsd2pcm_t *d)
 {
-    return 44100.0 * d->mult / 8.0 / DSD2PCM_RATE;
+    return d->mult / 64.0;            /* bytes per channel per output sample */
+}
+
+unsigned dsd2pcm_out_rate(const dsd2pcm_t *d)
+{
+    return (unsigned)d->base * 8;
+}
+
+void dsd2pcm_reset(dsd2pcm_t *d)
+{
+    memset(d->sym, 0x69, d->groups - 1);
+    for (int i = 0; i < d->nhb; i++) {
+        halfband_t *b = &d->hb[i];
+        memset(b->e, 0, sizeof(float) * ((size_t)b->Q + CHUNK));
+        memset(b->o, 0, sizeof(float) * ((size_t)2 * b->Q + CHUNK));
+        b->has_pend = 0;
+    }
 }
 
 /* stage 1 for `m` new bytes already placed after the history.

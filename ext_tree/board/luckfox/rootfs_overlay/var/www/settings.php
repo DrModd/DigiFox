@@ -31,6 +31,15 @@
     <div class="status" id="status"></div>
 
     <section class="panel">
+        <div class="set-head"><div class="cap grow" data-t="src">ПЕРЕСЧЁТ ЧАСТОТЫ</div><div class="set-val" id="v-src"></div></div>
+        <div class="row2">
+            <button class="hifi" data-src="ak4137">AK4137</button>
+            <button class="hifi" data-src="fox" data-t="srcFox">ФОКС</button>
+        </div>
+        <div class="hint" data-t="srcHint">AK4137 — Фокс отдаёт звук как есть, частоту пересчитывает AK4137 в усилителе. ФОКС — Фокс сам переводит всё в PCM 192 кГц / 32 бит: PCM через soxr, DSD64–DSD256 через дециматор; DSD512 в этом режиме не поддерживается. Переключение перезапускает плеер.</div>
+    </section>
+
+    <section class="panel">
         <div class="set-head"><div class="cap grow" data-t="clock">ТАКТИРОВАНИЕ</div><div class="set-val" id="v-mode"></div></div>
         <div class="row2">
             <button class="hifi" data-k="mode" data-v="pll">PLL</button>

@@ -1,7 +1,0 @@
-config BR2_PACKAGE_DIGIFOX_SRCBENCH
-	bool "digifox-srcbench"
-	select BR2_PACKAGE_LIBSOXR
-	help
-	  DigiFox: CPU load of PCM resampling to 192 kHz (soxr) and
-	  DSD to PCM conversion, to see whether the Fox can replace the
-	  AK4137 sample-rate converter of the DigiD D1 amplifier.

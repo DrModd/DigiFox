@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# digifox-srcmode — кто пересчитывает частоту: AK4137 в усилителе или Фокс.
+#
+#   digifox-srcmode            текущий режим (ak4137 | fox)
+#   digifox-srcmode ak4137     Фокс отдаёт звук как есть, пересчитывает AK4137
+#   digifox-srcmode fox        Фокс сам переводит всё в PCM 192 кГц / 32 бит
+#                              (модуль ALSA "digifox": soxr, DSD64..DSD256)
+#   digifox-srcmode apply      записать /etc/asound.std по сохранённому режиму
+#                              (при загрузке, S21digifox-src)
+#
+# Режим хранится в /etc/digifox/srcmode (переживает обновления).
+# Плееры выводят в "default", USB -> I2S (uac2_router) читает режим сам.
+
+MODE_FILE=/etc/digifox/srcmode
+ASOUND=/etc/asound.std
+
+get_mode() {
+    [ "$(cat $MODE_FILE 2>/dev/null)" = fox ] && echo fox || echo ak4137
+}
+
+write_asound() {
+    tmp=$ASOUND.tmp.$$
+    if [ "$(get_mode)" = fox ]; then
+        cat > $tmp <<'CONF'
+# DigiFox: пересчёт на Фоксе (digifox-srcmode fox)
+pcm.!default { type digifox slave "hw:0,0" }
+pcm.digifox { type digifox slave "hw:0,0" }
+ctl.!default { type hw card 0 }
+CONF
+    else
+        printf 'pcm.!default\n{\ntype hw\ncard 0\n}\nctl.!default\n{\ntype hw\ncard 0\n}\n' > $tmp
+    fi
+    if cmp -s $tmp $ASOUND; then rm -f $tmp; return 1; fi
+    mv $tmp $ASOUND
+    return 0
+}
+
+case "$1" in
+    "")
+        get_mode ;;
+    apply)
+        write_asound ;;
+    fox|ak4137)
+        mkdir -p /etc/digifox
+        echo "$1" > $MODE_FILE
+        write_asound || { sync; exit 0; }
+        sync
+        # перезапустить активный плеер и USB -> I2S, если вывод сейчас через I2S
+        if [ "$(cat /etc/output 2>/dev/null)" = I2S ] &&
+           [ "$(readlink /etc/asound.conf)" = /etc/asound.std ]; then
+            . /opt/audio-transition-lock.sh
+            run_without_audio_lock_fd sh -c '/etc/init.d/S95* restart' >/dev/null 2>&1 || true
+        fi
+        ;;
+    *)
+        echo "usage: digifox-srcmode [ak4137|fox|apply]" >&2
+        exit 1 ;;
+esac

@@ -1,0 +1,9 @@
+config BR2_PACKAGE_DIGIFOX_SRC
+	bool "digifox-src"
+	depends on BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_LIBSOXR
+	help
+	  DigiFox sample-rate conversion for amplifiers without the AK4137:
+	  ALSA plugin "digifox" (everything -> PCM 192 kHz / 32 bit:
+	  PCM through soxr, DSD64..DSD256 through a multi-stage decimator)
+	  and the digifox-srcbench CPU load test.

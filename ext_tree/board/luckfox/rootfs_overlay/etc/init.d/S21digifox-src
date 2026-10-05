@@ -1,0 +1,7 @@
+#!/bin/sh
+# DigiFox: /etc/asound.std по режиму пересчёта (digifox-srcmode)
+case "$1" in
+    start|restart|reload) /usr/bin/digifox-srcmode apply ;;
+    stop) ;;
+esac
+exit 0
