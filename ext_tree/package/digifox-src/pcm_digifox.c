@@ -23,6 +23,7 @@
 #include <math.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
 #include <sched.h>
 #include <time.h>
 #include <stdio.h>
@@ -39,8 +40,8 @@
 #define CH          2
 #define ST_CAP      32768           /* staging, output frames               */
 #define ST_ROOM     12288           /* free staging needed to convert a chunk */
-#define PCM_CHUNK   2048            /* input frames per PCM conversion step  */
-#define DSD_CHUNK   4096            /* bytes per channel per DSD step        */
+#define PCM_CHUNK   1024            /* input frames per PCM conversion step  */
+#define DSD_CHUNK   2048            /* bytes per channel per DSD step        */
 /* what the player sends, for the amplifier display (pfrate -> "@IN ...") */
 #define IN_FILE     "/tmp/digifox_in"
 
@@ -90,6 +91,13 @@ typedef struct {
     pthread_t    thr;
     int          thr_ok, quit;
     unsigned long writes;           /* successful slave writes (progress)    */
+    unsigned long xruns, stalls;    /* slave recoveries, stall starts (log)  */
+
+    /* The player waits on this eventfd, not on the slave: "room in our ring"
+     * and "room in the I2S buffer" are different things, and waiting on the
+     * slave made the player spin at real-time priority whenever the I2S had
+     * room but the ring did not — starving the USB driver on the single core. */
+    int          efd, ev_set;
 } dfx_t;
 
 /* ------------------------------------------------------------ helpers */
@@ -259,6 +267,7 @@ static void convert_chunk(dfx_t *d)
 
 static int slave_recover(dfx_t *d, int err)
 {
+    d->xruns++;
     if (err == -EPIPE || err == -ESTRPIPE || err == -EBADFD) {
         int e = snd_pcm_prepare(d->slave);
         return e < 0 ? e : 0;
@@ -289,6 +298,7 @@ static int flush(dfx_t *d)
             int stalled = d->wpos == d->hw &&
                           d->io.buffer_size - used < d->io.period_size;
             if (!stalled) break;
+            d->stalls++;
             snd_pcm_uframes_t z = (d->s_period - pending % d->s_period) % d->s_period;
             if (z && d->st_len + z <= ST_CAP) {
                 memmove(d->st + (d->st_pos + z) * CH, d->st + d->st_pos * CH, pending * CH * sizeof(int32_t));
@@ -344,8 +354,36 @@ static void update_played(dfx_t *d)
     if (p > d->played) d->played = p;
 }
 
-/* move data: staging -> slave, ring -> staging. Never blocks. */
+/* eventfd readable <=> the player can write at least one period */
+static void signal_ready(dfx_t *d)
+{
+    if (d->efd < 0) return;
+    int ready = 1;
+    if (d->io.buffer_size && d->st) {
+        snd_pcm_uframes_t used = (snd_pcm_uframes_t)(d->wpos - d->played);
+        ready = d->io.buffer_size - used >= d->io.period_size;
+    }
+    if (ready && !d->ev_set) {
+        uint64_t one = 1;
+        if (write(d->efd, &one, sizeof one) == sizeof one) d->ev_set = 1;
+    } else if (!ready && d->ev_set) {
+        uint64_t v;
+        if (read(d->efd, &v, sizeof v) == sizeof v || errno == EAGAIN) d->ev_set = 0;
+    }
+}
+
+static void pump_core(dfx_t *d);
+
+/* move data and tell the player whether it may write */
 static void pump(dfx_t *d)
+{
+    pump_core(d);
+    if (d->running && d->st) update_played(d);
+    signal_ready(d);
+}
+
+/* move data: staging -> slave, ring -> staging. Never blocks. */
+static void pump_core(dfx_t *d)
 {
     if (!d->running || !d->st) return;
     for (int guard = 0; guard < 256; guard++) {
@@ -457,10 +495,13 @@ static void reset_stream(dfx_t *d)
 static int dfx_prepare(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
+    { uint64_t v; if (d->efd >= 0 && read(d->efd, &v, sizeof v) < 0) {} d->ev_set = 0; }
     d->running = 0;
     reset_stream(d);
     snd_pcm_drop(d->slave);
-    return snd_pcm_prepare(d->slave);
+    int err = snd_pcm_prepare(d->slave);
+    signal_ready(d);                 /* empty ring: the player may write */
+    return err;
 }
 
 static int dfx_start(snd_pcm_ioplug_t *io)
@@ -596,34 +637,17 @@ static int dfx_delay(snd_pcm_ioplug_t *io, snd_pcm_sframes_t *delayp)
     return 0;
 }
 
-static int dfx_poll_count(snd_pcm_ioplug_t *io)
-{
-    dfx_t *d = io->private_data;
-    return snd_pcm_poll_descriptors_count(d->slave);
-}
-
-static int dfx_poll_desc(snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned int space)
-{
-    dfx_t *d = io->private_data;
-    return snd_pcm_poll_descriptors(d->slave, pfd, space);
-}
-
 static int dfx_poll_revents(snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned int nfds,
                             unsigned short *revents)
 {
     dfx_t *d = io->private_data;
-    unsigned short r = 0;
-    snd_pcm_poll_descriptors_revents(d->slave, pfd, nfds, &r);
+    (void)pfd; (void)nfds;
     pump(d);
-    if (d->running) update_played(d);
     snd_pcm_uframes_t free_ = io->buffer_size - (snd_pcm_uframes_t)(d->wpos - d->played);
     unsigned short ev = free_ >= io->period_size ? POLLOUT : 0;
-    /* a slave that is broken for good must not leave the player spinning */
-    if (r & (POLLERR | POLLNVAL)) {
-        snd_pcm_state_t st = snd_pcm_state(d->slave);
-        if (st == SND_PCM_STATE_DISCONNECTED || st == SND_PCM_STATE_OPEN)
-            ev |= POLLERR;
-    }
+    /* a slave that is broken for good must not leave the player waiting */
+    snd_pcm_state_t st = snd_pcm_state(d->slave);
+    if (st == SND_PCM_STATE_DISCONNECTED || st == SND_PCM_STATE_OPEN) ev |= POLLERR;
     *revents = ev;
     return 0;
 }
@@ -638,6 +662,7 @@ static int dfx_close(snd_pcm_ioplug_t *io)
         pthread_join(d->thr, NULL);
     }
     pthread_mutex_destroy(&d->lock);
+    if (d->efd >= 0) close(d->efd);
     free_conv(d);
     if (d->slave) snd_pcm_close(d->slave);
     free(d->slave_name);
@@ -650,13 +675,32 @@ static int dfx_close(snd_pcm_ioplug_t *io)
 static void *pump_thread(void *arg)
 {
     dfx_t *d = arg;
-    /* above the players (Qobuz renice -15) and the USB router (FIFO 70) */
-    struct sched_param sp = { .sched_priority = 72 };
+    /* real-time, but below the kernel's IRQ threads (FIFO 50): converting a
+     * chunk must never hold up the USB driver */
+    struct sched_param sp = { .sched_priority = 45 };
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     struct pollfd pfd[8];
+    double next_log = 0;
     for (;;) {
         pthread_mutex_lock(&d->lock);
         if (d->quit) { pthread_mutex_unlock(&d->lock); break; }
+        /* touch /tmp/digifox_debug to get a state line every 0.2 s */
+        double t = now_s();
+        if (t >= next_log) {
+            next_log = t + 0.2;
+            if (access("/tmp/digifox_debug", F_OK) == 0) {
+                FILE *f = fopen("/tmp/digifox_src.log", "a");
+                if (f) {
+                    snd_pcm_sframes_t sd = -1;
+                    if (d->running) snd_pcm_delay(d->slave, &sd);
+                    fprintf(f, "%.3f run=%d rate=%u ring=%lu st=%lu slave=%s delay=%ld xruns=%lu stalls=%lu ev=%d\n",
+                            t, d->running, d->io.rate, (unsigned long)(d->wpos - d->hw),
+                            (unsigned long)(d->st_len - d->st_pos), snd_pcm_state_name(snd_pcm_state(d->slave)),
+                            (long)sd, d->xruns, d->stalls, d->ev_set);
+                    fclose(f);
+                }
+            }
+        }
         int nf = 0, progress = 0, active = d->running && d->st;
         if (active) {
             uint64_t h0 = d->hw; unsigned long w0 = d->writes;
@@ -693,8 +737,6 @@ LOCKED(int, dfx_hw_free, (snd_pcm_ioplug_t *io), (io))
 LOCKED(int, dfx_prepare, (snd_pcm_ioplug_t *io), (io))
 LOCKED(int, dfx_pause, (snd_pcm_ioplug_t *io, int e), (io, e))
 LOCKED(int, dfx_delay, (snd_pcm_ioplug_t *io, snd_pcm_sframes_t *dp), (io, dp))
-LOCKED(int, dfx_poll_count, (snd_pcm_ioplug_t *io), (io))
-LOCKED(int, dfx_poll_desc, (snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned int sp), (io, pfd, sp))
 LOCKED(int, dfx_poll_revents, (snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned int n,
        unsigned short *rv), (io, pfd, n, rv))
 
@@ -710,8 +752,6 @@ static const snd_pcm_ioplug_callback_t dfx_cb = {
     .drain = dfx_drain,
     .pause = dfx_pause_l,
     .delay = dfx_delay_l,
-    .poll_descriptors_count = dfx_poll_count_l,
-    .poll_descriptors = dfx_poll_desc_l,
     .poll_revents = dfx_poll_revents_l,
 };
 
@@ -771,6 +811,8 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
         return err;
     }
 
+    d->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    d->ev_set = 0;
     pthread_mutex_init(&d->lock, NULL);
     d->thr_ok = pthread_create(&d->thr, NULL, pump_thread, d) == 0;
 
@@ -779,8 +821,8 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     d->io.callback = &dfx_cb;
     d->io.private_data = d;
     d->io.mmap_rw = 0;
-    d->io.poll_fd = -1;
-    d->io.poll_events = POLLOUT;
+    d->io.poll_fd = d->efd;
+    d->io.poll_events = POLLIN;
 
     err = snd_pcm_ioplug_create(&d->io, name, stream, mode);
     if (err < 0) {
