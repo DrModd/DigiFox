@@ -18,17 +18,59 @@ put() {   # put <плеер> <исполнитель> <название> <аль
 
 case "$1" in
 qobuz)
+    # [Stream N]: New audio stream (starting from 0ms)
     # [Stream N]: Stream metadata became available:
     #       Title: ...
     #       Artist: ...
     #       Album: ...
-    t=""; a=""
+    # [Stream N]: Audio stream finished          (данные выданы, буфер ещё играет)
+    # [Stream N]: Audio stream has been disposed of
+    # Для бесшовного воспроизведения qobuz-connect открывает следующий трек
+    # заранее, и его метаданные приходят, пока ещё играет текущий. Поэтому
+    # метаданные копятся по номеру потока, а на экран идёт только поток,
+    # который действительно играет: следующий показывается, когда текущий
+    # освобождён (disposed). Если это сообщение не придёт — запасной вариант:
+    # через QOBUZ_TAIL секунд после "finished" текущего.
+    LOG=/tmp/qobuz-meta.log; : > $LOG; nlog=0
+    TAIL=${QOBUZ_TAIL:-6}
+    cur=""; pend=""; pa=""; pt=""; pal=""
+    sid=""; t=""; a=""; inmeta=0; seen_disp=0; tpid=""; fin=""
+    untimer() { [ -n "$tpid" ] && kill $tpid 2>/dev/null; tpid=""; }
+    show() { untimer; put qobuz "$pa" "$pt" "$pal"; cur=$pend; pend=""; }
+    # запасной вариант: текущий выдал все данные, следующий известен, а
+    # сообщений "disposed" эта версия qobuz-connect не пишет
+    arm() {
+        if [ -n "$pend" ] && [ "$fin" = "$cur" ] && [ $seen_disp = 0 ]; then
+            untimer
+            ( sleep $TAIL; put qobuz "$pa" "$pt" "$pal" ) &
+            tpid=$!; cur=$pend; pend=""
+        fi
+    }
     while IFS= read -r l; do
         case "$l" in
-            *"metadata became available"*) t=""; a="" ;;
-            *"Title: "*)  t=${l#*Title: } ;;
-            *"Artist: "*) a=${l#*Artist: } ;;
-            *"Album: "*)  put qobuz "$a" "$t" "${l#*Album: }" ;;
+            *"[Stream "*)
+                id=${l#*\[Stream }; id=${id%%\]*}
+                # короткий журнал для диагностики: /tmp/qobuz-meta.log
+                nlog=$((nlog + 1)); [ $nlog -gt 300 ] && { : > $LOG; nlog=0; }
+                echo "$(date +%T) $l" >> $LOG
+                case "$l" in
+                    *"metadata became available"*) sid=$id; t=""; a=""; inmeta=1 ;;
+                    *"disposed of"*)
+                        seen_disp=1
+                        if [ "$id" = "$cur" ]; then
+                            cur=""
+                            [ -n "$pend" ] && show
+                        fi ;;
+                    *"stream finished"*) fin=$id; arm ;;
+                esac ;;
+            *"Title: "*)  [ $inmeta = 1 ] && t=${l#*Title: } ;;
+            *"Artist: "*) [ $inmeta = 1 ] && a=${l#*Artist: } ;;
+            *"Album: "*)
+                [ $inmeta = 1 ] || continue
+                inmeta=0; untimer
+                pend=$sid; pa=$a; pt=$t; pal=${l#*Album: }
+                # нечего ждать: ничего не играет или это тот же поток
+                if [ -z "$cur" ] || [ "$cur" = "$sid" ]; then show; else arm; fi ;;
         esac
     done
     ;;
