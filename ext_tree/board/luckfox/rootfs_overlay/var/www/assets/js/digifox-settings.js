@@ -34,24 +34,25 @@
         srcHint: 'AK4137 — the Fox sends audio as is, the AK4137 in the amplifier converts it. FOX — the Fox converts everything to PCM 192 kHz / 32 bit itself: PCM with soxr, DSD64–DSD256 with a decimator; DSD512 is not supported in this mode. Switching restarts the player.'
     };
     var SRC_NAME = RU ? { ak4137: 'в усилителе', fox: 'на Фоксе, 192 кГц' } : { ak4137: 'in the amplifier', fox: 'on the Fox, 192 kHz' };
-    var srcMode = null, srcBusy = false;
+    var srcMode = null, srcBusy = false, akPresent = null;
+    var NO_AK = RU ? 'AK4137 в усилителе не найдена — пересчитывает только Фокс' : 'No AK4137 in the amplifier — only the Fox can convert';
 
     function renderSrc() {
         var b = document.querySelectorAll('[data-src]');
         for (var i = 0; i < b.length; i++) {
             var v = b[i].getAttribute('data-src');
             b[i].className = 'hifi' + (srcMode === v ? ' on' : '');
-            b[i].disabled = !srcMode || srcBusy || busy;
+            b[i].disabled = !srcMode || srcBusy || busy || (v === 'ak4137' && akPresent === false);
         }
         var el = document.getElementById('v-src');
-        if (el) el.textContent = srcMode ? SRC_NAME[srcMode] : '';
+        if (el) el.textContent = akPresent === false ? NO_AK : srcMode ? SRC_NAME[srcMode] : '';
     }
 
     function loadSrc(resp) {
         return (resp || fetch('src.php', { cache: 'no-store' })).then(function (r) {
             return r.json().then(function (j) {
                 if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-                srcMode = j.mode; renderSrc();
+                srcMode = j.mode; akPresent = j.ak; renderSrc();
             });
         });
     }

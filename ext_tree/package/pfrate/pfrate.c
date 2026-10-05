@@ -7,6 +7,10 @@
  *   @RATE <Hz> <format>     e.g. @RATE 192000 S32_LE
  *   @RATE DSD<N>            e.g. @RATE DSD128
  *   @RATE STOP              nothing is playing
+ *   @IN <Hz> <format> | @IN DSD<N> | @IN STOP
+ *                           what the player really sends when the Fox converts
+ *                           everything to 192 kHz (ALSA plugin "digifox" writes
+ *                           /tmp/digifox_in); only for the amplifier display
  *
  * as soon as a new stream is opened, so the STM32 can mute the AX5689 before
  * the new stream starts. A new rate is reported immediately; STOP only after it
@@ -27,6 +31,7 @@
 #define POLL_MS       20
 #define GLOB_EVERY_MS 1000     /* re-scan cards (USB DAC may come and go) */
 #define STOP_HOLD_MS  400
+#define IN_FILE       "/tmp/digifox_in"
 #ifndef PFRATE_GLOB
 #define PFRATE_GLOB   "/proc/asound/card*/pcm*p/sub0/hw_params"
 #endif
@@ -85,6 +90,7 @@ int main(void)
     glob_t g = { 0 };
     long last_glob = -GLOB_EVERY_MS, stop_since = -1;
     char last[64] = "", cur[64];
+    char last_in[64] = "STOP", in[64];
 
     signal(SIGPIPE, SIG_DFL);
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -120,6 +126,24 @@ int main(void)
                 strcpy(last, "STOP");
                 stop_since = -1;
             }
+        }
+        /* source of the conversion plugin, only while the I2S port is open */
+        strcpy(in, "STOP");
+        if (open_) {
+            int fd = open(IN_FILE, O_RDONLY);
+            if (fd >= 0) {
+                ssize_t n = read(fd, in, sizeof(in) - 1);
+                close(fd);
+                if (n > 0) { in[n] = 0; in[strcspn(in, "\r\n")] = 0; }
+                if (n <= 0 || !in[0]) strcpy(in, "STOP");
+            }
+        }
+        if (strcmp(in, last_in) != 0 && (open_ || strcmp(last, "STOP") == 0)) {
+            char line[80];
+            int len = snprintf(line, sizeof(line), "@IN %s\n", in);
+            if (write(1, line, len) < 0)
+                return 1;
+            strcpy(last_in, in);
         }
         usleep(POLL_MS * 1000);
     }

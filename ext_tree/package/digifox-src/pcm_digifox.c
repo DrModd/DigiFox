@@ -23,6 +23,8 @@
 #include <math.h>
 #include <poll.h>
 #include <time.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +38,8 @@
 #define ST_CAP      32768           /* staging, output frames               */
 #define PCM_CHUNK   2048            /* input frames per PCM conversion step  */
 #define DSD_CHUNK   4096            /* bytes per channel per DSD step        */
+/* what the player sends, for the amplifier display (pfrate -> "@IN ...") */
+#define IN_FILE     "/tmp/digifox_in"
 
 enum { M_NONE, M_PASS, M_PCM, M_DSD };
 enum { Q_AUTO, Q_HQ, Q_VHQ };
@@ -87,8 +91,21 @@ static int dsd_bits(snd_pcm_format_t f)
     }
 }
 
+static void report_in(const char *s)
+{
+    if (!s) { unlink(IN_FILE); return; }
+    char tmp[64];
+    snprintf(tmp, sizeof tmp, IN_FILE ".%d", (int)getpid());
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "%s\n", s);
+    fclose(f);
+    rename(tmp, IN_FILE);
+}
+
 static void free_conv(dfx_t *d)
 {
+    if (d->mode != M_NONE) report_in(NULL);
     if (d->sx) { soxr_delete(d->sx); d->sx = NULL; }
     for (int c = 0; c < CH; c++) {
         if (d->dd[c]) { dsd2pcm_free(d->dd[c]); d->dd[c] = NULL; }
@@ -317,6 +334,14 @@ static int dfx_hw_params(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params)
         return -EINVAL;
     }
     d->ratio = (double)io->rate / OUT_RATE;
+    char in[48];
+    if (d->mode == M_DSD) {
+        unsigned long bitrate = (unsigned long)io->rate * dsd_bits(io->format);
+        snprintf(in, sizeof in, "DSD%lu", bitrate % 44100 == 0 ? bitrate / 44100 : bitrate / 48000);
+    } else {
+        snprintf(in, sizeof in, "%u %s", io->rate, snd_pcm_format_name(io->format));
+    }
+    report_in(in);
     return 0;
 }
 

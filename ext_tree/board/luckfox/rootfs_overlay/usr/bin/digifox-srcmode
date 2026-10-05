@@ -43,6 +43,7 @@ case "$1" in
         write_asound ;;
     fox|ak4137)
         mkdir -p /etc/digifox
+        rm -f /tmp/digifox_in
         echo "$1" > $MODE_FILE
         write_asound || { sync; exit 0; }
         sync

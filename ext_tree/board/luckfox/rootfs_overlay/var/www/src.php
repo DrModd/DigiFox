@@ -1,6 +1,6 @@
 <?php
 // src.php — кто пересчитывает частоту: AK4137 в усилителе или Фокс (digifox-srcmode).
-//   GET            -> {"mode":"ak4137"|"fox"}
+//   GET            -> {"mode":"ak4137"|"fox", "ak":true|false|null (есть ли AK4137)}
 //   POST mode=...  -> переключить (перезапускает активный плеер), ответ как GET
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -26,4 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
-echo json_encode(['mode' => src_mode()]);
+// усилитель сообщает, есть ли AK4137 (aak, прошивка 1.2+): null — неизвестно
+$ak = @file_get_contents('/tmp/amp_ak');
+$ak = $ak === false ? null : (trim($ak) === '1');
+echo json_encode(['mode' => src_mode(), 'ak' => $ak]);

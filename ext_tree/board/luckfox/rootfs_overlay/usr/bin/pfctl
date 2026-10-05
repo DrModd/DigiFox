@@ -39,6 +39,8 @@
 #   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode>
 #                     от усилителя: настройки -> /tmp/amp_cfg. Ответа нет.
 #   aver <версия>     от усилителя: версия прошивки -> /tmp/amp_ver. Ответа нет.
+#   aak 0|1           от усилителя: есть ли AK4137 -> /tmp/amp_ak. Нет AK4137 —
+#                     Фокс сам включает пересчёт частоты (digifox-srcmode fox).
 #
 # Запросы приложения к усилителю (amp.php кладёт их в /tmp/amp_req):
 #   "vol <pos>" -> в UART уходит  @AVOL <pos>
@@ -130,6 +132,11 @@ do_cmd() {
         acfg) # настройки усилителя от STM32
             echo "$2 $3 $4 $5 $6 $7" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
         aver) echo "$2" > /tmp/amp_ver ;;
+        aak)  # есть ли AK4137 в усилителе; без неё пересчитывать обязан Фокс
+            echo "$2" > /tmp/amp_ak
+            if [ "$2" = 0 ] && [ "$(/usr/bin/digifox-srcmode)" != fox ]; then
+                ( /usr/bin/digifox-srcmode fox >/dev/null 2>&1 & )
+            fi ;;
         rate) echo "@RATE $(rate_now)" ;;
         track) echo "@TRACK $(track_line)" ;;
         "")   ;;
