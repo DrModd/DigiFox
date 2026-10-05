@@ -2,8 +2,8 @@
  * dsd2pcm — DSD64..DSD512 to PCM 352.8 kHz, multi-stage. See dsd2pcm.h.
  *
  * Tuned for the in-order Cortex-A7 of the RV1106:
- *   - stage 1 sums integer tables (Q28) with two accumulators: integer adds
- *     have 1-cycle latency, a float sum chain would stall on every add;
+ *   - stage 1 sums integer tables (Q28), one table at a time over a whole
+ *     chunk (see stage1), so the table stays in L1 and nothing stalls;
  *   - half-bands run on the polyphase split: all side taps of a half-band
  *     fall on the odd phase, so each output is one contiguous dot product
  *     that the compiler turns into NEON (-O3 -ffast-math -mfpu=neon).
@@ -37,6 +37,7 @@ struct dsd2pcm {
     int32_t *lut;              /* groups x 256, Q28                           */
     uint8_t *sym;              /* history (groups-1) + CHUNK bytes            */
     float   *s1;               /* stage-1 output for one chunk                */
+    int32_t *acc;              /* stage-1 integer accumulators (CHUNK)        */
     int      nhb;
     halfband_t hb[MAX_HB];
 };
@@ -146,7 +147,8 @@ dsd2pcm_t *dsd2pcm_new(int mult)
     d->lut = malloc(sizeof(int32_t) * d->groups * 256);
     d->sym = calloc((size_t)d->groups - 1 + CHUNK, 1);
     d->s1 = malloc(sizeof(float) * CHUNK);
-    if (!h || !d->lut || !d->sym || !d->s1) { free(h); dsd2pcm_free(d); return NULL; }
+    d->acc = malloc(sizeof(int32_t) * CHUNK);
+    if (!h || !d->lut || !d->sym || !d->s1 || !d->acc) { free(h); dsd2pcm_free(d); return NULL; }
     /* cut-off in the middle of 96 kHz .. r1-96 kHz */
     design_lp(h, ntap, (r1 / 2) / fd, kaiser_beta(ATTEN_DB));
     for (int g = 0; g < d->groups; g++)
@@ -173,7 +175,7 @@ void dsd2pcm_free(dsd2pcm_t *d)
 {
     if (!d) return;
     for (int i = 0; i < d->nhb; i++) { free(d->hb[i].b); free(d->hb[i].e); free(d->hb[i].o); }
-    free(d->lut); free(d->sym); free(d->s1);
+    free(d->lut); free(d->sym); free(d->s1); free(d->acc);
     free(d);
 }
 
@@ -182,25 +184,32 @@ double dsd2pcm_bytes_per_frame(const dsd2pcm_t *d)
     return 44100.0 * d->mult / 8.0 / DSD2PCM_RATE;
 }
 
-/* stage 1 for `m` new bytes already placed after the history */
+/* stage 1 for `m` new bytes already placed after the history.
+ * Group-outer order: each pass reads one 1 KB table and adds it into an
+ * integer accumulator row. The table stays hot in L1, the inner loop has no
+ * dependency chain, so the in-order A7 can issue a lookup every few cycles.
+ * (Sample-outer order touched all tables per sample: ~15 cycles per lookup.) */
 static void stage1(dsd2pcm_t *d, int m)
 {
     const int G = d->groups;
     const uint8_t *s = d->sym + (G - 1);
-    const int32_t *lut = d->lut;
+    int32_t *acc = d->acc;
+    memset(acc, 0, sizeof(int32_t) * (size_t)m);
+    for (int g = 0; g < G; g++) {
+        const int32_t *L = d->lut + g * 256;
+        const uint8_t *p = s - g;
+        int i = 0;
+        for (; i + 3 < m; i += 4) {
+            acc[i]     += L[p[i]];
+            acc[i + 1] += L[p[i + 1]];
+            acc[i + 2] += L[p[i + 2]];
+            acc[i + 3] += L[p[i + 3]];
+        }
+        for (; i < m; i++) acc[i] += L[p[i]];
+    }
     const float scale = 1.0f / (float)(1 << LUT_SHIFT);
     float *o = d->s1;
-    for (int i = 0; i < m; i++) {
-        const uint8_t *p = s + i;
-        int32_t a0 = 0, a1 = 0;                    /* two chains: no add stalls */
-        int g = 0;
-        for (; g + 1 < G; g += 2) {
-            a0 += lut[g * 256 + p[-g]];
-            a1 += lut[(g + 1) * 256 + p[-g - 1]];
-        }
-        if (g < G) a0 += lut[g * 256 + p[-g]];
-        o[i] = (float)(a0 + a1) * scale;
-    }
+    for (int i = 0; i < m; i++) o[i] = (float)acc[i] * scale;
     memmove(d->sym, d->sym + m, (size_t)(G - 1));
 }
 
