@@ -8,7 +8,7 @@
 // DigiFox:
 //   GET ?full=1  -> ещё cfg{filter,delay,dsdgain,standby,autoon,mode}, ver, now,
 //                   tz, sleep_left (с), alarm{on,time,days,src,vol}
-//   POST action=set&key=K&val=V    -> настройка усилителя (@ASET)
+//   POST action=set&key=K&val=V    -> настройка усилителя (@ASET); vmax/von — положение 0..max
 //   POST action=sleep&min=N        -> таймер сна, 0 — отменить
 //   POST action=alarm&on=&time=&days=&src=&vol=  -> будильник
 //   POST action=tz&tz=MSK-3        -> часовой пояс (POSIX TZ)
@@ -39,7 +39,7 @@ $cfg_dir    = '/etc/digifox';
 $alarm_file = $cfg_dir . '/alarm.conf';
 $tz_file    = $cfg_dir . '/tz';
 $sleep_file = '/tmp/sleep_at';
-$cfg_keys   = ['filter', 'delay', 'dsdgain', 'standby', 'autoon', 'mode'];
+$cfg_keys   = ['filter', 'delay', 'dsdgain', 'standby', 'autoon', 'mode', 'vmax', 'von'];  // vmax/von: прошивка 1.3+
 
 function tz_get($f) {
     $t = trim((string)@file_get_contents($f));
@@ -100,7 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'set') {
         $key = $_POST['key'] ?? '';
         $val = (int)($_POST['val'] ?? -1);
-        if (!in_array($key, $cfg_keys, true) || $val < 0 || $val > ($key === 'standby' ? 2 : 1)) {
+        $top = in_array($key, ['vmax', 'von'], true) ? ($st['max'] ?? 80) : ($key === 'standby' ? 2 : 1);
+        if (!in_array($key, $cfg_keys, true) || $val < 0 || $val > $top) {
             http_response_code(400); echo json_encode(['error' => 'bad setting']); exit;
         }
         if ($st === null) { http_response_code(503); echo json_encode(['error' => 'amplifier not connected']); exit; }
@@ -146,7 +147,7 @@ $out = $st === null ? ['present' => false] : ['present' => true] + $st;
 if (isset($_GET['full'])) {
     $c = preg_split('/\s+/', trim((string)@file_get_contents('/tmp/amp_cfg')));
     if (count($c) >= 6) {
-        foreach ($cfg_keys as $i => $k) $out['cfg'][$k] = (int)$c[$i];
+        foreach ($cfg_keys as $i => $k) if (isset($c[$i]) && $c[$i] !== '') $out['cfg'][$k] = (int)$c[$i];
     }
     $v = trim((string)@file_get_contents('/tmp/amp_ver'));
     $out['ver'] = $v !== '' ? $v : null;

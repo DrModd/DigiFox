@@ -36,7 +36,7 @@
 #   avol <pos> <max> <mute> <db> <power>
 #                     от усилителя (STM32): его состояние. Сохраняется
 #                     в /tmp/amp_state для приложения (amp.php). Ответа нет.
-#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode>
+#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von>]
 #                     от усилителя: настройки -> /tmp/amp_cfg. Ответа нет.
 #   aver <версия>     от усилителя: версия прошивки -> /tmp/amp_ver. Ответа нет.
 #   aak 0|1           от усилителя: есть ли AK4137 -> /tmp/amp_ak. Нет AK4137 —
@@ -130,7 +130,7 @@ do_cmd() {
             echo "$2 $3 $4 $5 ${6:-1} $(date +%s)" > /tmp/amp_state.tmp && mv /tmp/amp_state.tmp /tmp/amp_state
             ;;
         acfg) # настройки усилителя от STM32
-            echo "$2 $3 $4 $5 $6 $7" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
+            echo "$2 $3 $4 $5 $6 $7 $8 $9" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
         aver) echo "$2" > /tmp/amp_ver ;;
         aak)  # есть ли AK4137 в усилителе; без неё пересчитывать обязан Фокс
             echo "$2" > /tmp/amp_ak

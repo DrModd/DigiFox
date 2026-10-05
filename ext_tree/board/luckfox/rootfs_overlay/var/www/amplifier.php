@@ -70,6 +70,16 @@
         </div>
     </section>
 
+    <!-- Volume limits (amplifier firmware 1.3+) -->
+    <section class="panel">
+        <div class="cap">ГРОМКОСТЬ</div>
+        <div class="set-label">Предел громкости</div>
+        <select id="vmax" data-vk="vmax" aria-label="Предел громкости"></select>
+        <div class="set-label">При включении не громче</div>
+        <select id="von" data-vk="von" aria-label="Громкость при включении"></select>
+        <div class="hint" id="vol-hint">Предел — громче регулятор, пульт и приложение не дадут. При включении усилитель убавит громкость до заданной, если она была выше.</div>
+    </section>
+
     <!-- Sleep timer -->
     <section class="panel">
         <div class="set-head"><div class="cap grow">ТАЙМЕР СНА</div><div class="set-val" id="sleep-val"></div></div>

@@ -43,6 +43,39 @@
         }
     })();
 
+    // ---------------- volume limits ----------------
+    var VOL_OPTS = {
+        vmax: [[0, 'Без предела'], [-3, '−3 dB'], [-6, '−6 dB'], [-10, '−10 dB'], [-15, '−15 dB'], [-20, '−20 dB'], [-25, '−25 dB'], [-30, '−30 dB']],
+        von:  [[0, 'Как была'], [-10, '−10 dB'], [-15, '−15 dB'], [-20, '−20 dB'], [-25, '−25 dB'], [-30, '−30 dB'], [-35, '−35 dB'], [-40, '−40 dB']]
+    };
+    (function fillVol() {
+        ['vmax', 'von'].forEach(function (k) {
+            VOL_OPTS[k].forEach(function (o) {
+                var e = document.createElement('option'); e.value = o[0]; e.textContent = o[1]; $(k).appendChild(e);
+            });
+            $(k).addEventListener('change', function () {
+                if (!S || !S.present || !S.max) return;
+                var db = parseInt(this.value, 10);
+                setCfg(k, String(db === 0 ? 0 : S.max + db));
+            });
+        });
+    })();
+    function renderVol(amp) {
+        var ok = amp && amp.cfg && amp.cfg.vmax !== undefined;
+        ['vmax', 'von'].forEach(function (k) {
+            var sel = $(k);
+            sel.disabled = !ok || flashing;
+            if (!ok || document.activeElement === sel) return;
+            var pos = pending[k] !== undefined ? parseInt(pending[k], 10) : amp.cfg[k];
+            var db = pos ? pos - amp.max : 0, has = false;
+            for (var i = 0; i < sel.options.length; i++) if (parseInt(sel.options[i].value, 10) === db) has = true;
+            if (!has) { var e = document.createElement('option'); e.value = db; e.textContent = (db < 0 ? '−' : '') + Math.abs(db) + ' dB'; sel.appendChild(e); }
+            sel.value = String(db);
+        });
+        if (amp && amp.cfg && amp.cfg.vmax === undefined)
+            $('vol-hint').textContent = 'Нужна прошивка усилителя 1.3 или новее (раздел «Прошивка усилителя» ниже).';
+    }
+
     // ---------------- render ----------------
     function render() {
         var amp = S && S.present ? S : null;
@@ -56,6 +89,8 @@
             b.className = 'hifi' + (cur !== null && String(cur) === v ? ' on' : '');
             b.disabled = !amp || !amp.cfg || flashing;
         }
+
+        renderVol(amp);
 
         // sleep timer
         var left = S ? S.sleep_left : 0;
