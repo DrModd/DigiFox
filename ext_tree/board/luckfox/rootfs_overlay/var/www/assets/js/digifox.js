@@ -13,6 +13,8 @@
         source: 'ИСТОЧНИК', amp: 'УСИЛИТЕЛЬ DIGID D1', volume: 'ГРОМКОСТЬ УСИЛИТЕЛЯ', mode: 'РЕЖИМ',
         players: 'ПЛЕЕРЫ', net: 'СЕТЬ', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
         m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки I2S', m_update: 'Обновление прошивки', m_reboot: 'Перезагрузить Фокс',
+        m_backup: 'Сохранить настройки в файл', m_restore: 'Восстановить настройки из файла', m_diag: 'Диагностика',
+        askRestore: 'Восстановить настройки из файла «%s»? Фокс перезагрузится.', restoreFail: 'Не удалось восстановить: ',
         m_classic: 'Классический интерфейс PureFox',
         noPlayer: 'Нет плеера', on: 'Включён', standby: 'Дежурный режим',
         noLink: 'Нет связи с Фоксом', ampNone: 'Усилитель не на связи (UART) — громкость регулируется только им',
@@ -32,6 +34,8 @@
         source: 'SOURCE', amp: 'DIGID D1 AMPLIFIER', volume: 'AMPLIFIER VOLUME', mode: 'MODE',
         players: 'PLAYERS', net: 'NETWORK', power: 'POWER', cancel: 'CANCEL', close: 'Close',
         m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'I2S settings', m_update: 'Firmware update', m_reboot: 'Reboot the Fox',
+        m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics',
+        askRestore: 'Restore settings from “%s”? The Fox will reboot.', restoreFail: 'Restore failed: ',
         m_classic: 'Classic PureFox interface',
         noPlayer: 'No player', on: 'On', standby: 'Standby',
         noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected (UART) — volume is set only by the amplifier',
@@ -413,6 +417,25 @@
         $('m-update').addEventListener('click', function () {
             show('menu', false);
             confirmBox(T.askUpdate, runUpdate);
+        });
+        $('m-restore').addEventListener('click', function () {
+            show('menu', false);
+            $('restore-file').value = '';
+            $('restore-file').click();
+        });
+        $('restore-file').addEventListener('change', function () {
+            var f = this.files[0];
+            if (!f) return;
+            confirmBox(T.askRestore.replace('%s', f.name), function () {
+                var fd = new FormData();
+                fd.append('file', f);
+                fetch('backup.php', { method: 'POST', body: fd }).then(function (r) {
+                    return r.json().then(function (j) {
+                        if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+                        reboot();
+                    });
+                }).catch(function (e) { alert(T.restoreFail + e.message); });
+            });
         });
         $('m-reboot').addEventListener('click', function () {
             show('menu', false);

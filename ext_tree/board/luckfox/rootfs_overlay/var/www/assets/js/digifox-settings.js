@@ -33,6 +33,8 @@
         src: 'SAMPLE-RATE CONVERSION', srcFox: 'FOX',
         fPhase: 'Filter phase', fLin: 'LINEAR', fInt: 'INTERM.', fMin: 'MINIMUM', fRoll: 'Roll-off',
         fSteep: 'STEEP', fStd: 'NORMAL', fSlow: 'SLOW', fGain: 'Headroom',
+        fLoud: 'Loudness compensation', offU: 'OFF', onU: 'ON',
+        fLoudHint: 'At low volume the ear hears less bass and treble. Loudness compensation lifts them more the lower the amplifier volume: no change in the top 10 dB of the scale, at −40 dB the bass is up ~10 dB and the treble ~3 dB. To avoid clipping the midrange gets quieter instead — turn the volume up a little.',
         fHint: 'Heard in about a second, so you can compare while listening. Minimum phase — no pre-ringing (like SHORT on the AK4137). Slow roll-off — gentler at the very top (like SLOW). −3 dB headroom avoids inter-sample overs on loud records; make up the level on the amplifier.',
         srcHint: 'AK4137 — the Fox sends audio as is, the AK4137 in the amplifier converts it. FOX — the Fox converts everything to PCM 192 kHz / 32 bit itself: PCM with soxr, DSD64–DSD256 with a decimator; DSD512 is not supported in this mode. Switching restarts the player.'
     };

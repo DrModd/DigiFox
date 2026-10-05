@@ -48,6 +48,19 @@
 /* filter settings (web page I2S): phase=lin|int|min rolloff=steep|std|slow gain=0|-3
  * re-read by the pump thread, so a change is heard within a second */
 #define FILTER_FILE "/etc/digifox/srcfilter"
+/* loudness compensation (web page I2S): "on" / "off", optional "ref=N" —
+ * no correction in the top N dB of the volume range (default 10) */
+#define LOUD_FILE   "/etc/digifox/loudness"
+/* amplifier volume, written by pfctl: "pos max mute db power time";
+ * one step is 1 dB, attenuation = max - pos */
+#define AMP_STATE   "/tmp/amp_state"
+#define LOUD_BASS_F   100.0         /* low shelf, Hz                         */
+#define LOUD_TREB_F 10000.0         /* high shelf, Hz                        */
+#define LOUD_BASS_K   0.35          /* dB of bass per dB below the reference */
+#define LOUD_TREB_K   0.10
+#define LOUD_BASS_MAX 15.0
+#define LOUD_TREB_MAX  5.0
+#define LOUD_STEP     0.2           /* dB per chunk while gliding (~40 dB/s) */
 
 enum { M_NONE, M_PASS, M_PCM, M_DSD };
 enum { Q_AUTO, Q_HQ, Q_VHQ };
@@ -93,6 +106,15 @@ typedef struct {
     int          f_roll;            /* 0 standard, 1 steep, 2 slow           */
     int          f_gain3;           /* 1: −3 dB headroom                     */
     time_t       f_mtime;
+
+    /* loudness: two shelves on the 192 kHz output, gain follows the volume */
+    int          ld_on, ld_ref;
+    time_t       ld_mtime;
+    double       ld_tb, ld_tt;      /* target bass / treble boost, dB        */
+    double       ld_gb, ld_gt;      /* current (glides to the target)        */
+    double       ld_pre;            /* linear pre-gain: no clipping on boost */
+    double       ld_c[2][5];        /* biquads: b0 b1 b2 a1 a2               */
+    double       ld_z[2][CH][4];    /* x1 x2 y1 y2 per section and channel  */
 
     /* The pump thread keeps the I2S fed while the player is busy elsewhere
      * (Qobuz preparing the next track for gapless: tens of ms without a
@@ -231,6 +253,115 @@ static void dsd_split(dfx_t *d, const uint8_t *src, size_t frames)
     }
 }
 
+/* ------------------------------------------------------------ loudness */
+
+/* RBJ cookbook shelf, slope 1 */
+static void shelf(double *c, int high, double f0, double gain_db)
+{
+    double A = pow(10.0, gain_db / 40.0), w = 2.0 * M_PI * f0 / OUT_RATE;
+    double cw = cos(w), al = sin(w) / 2.0 * sqrt(2.0), sa = 2.0 * sqrt(A) * al;
+    double b0, b1, b2, a0, a1, a2;
+    if (!high) {
+        b0 = A * ((A + 1) - (A - 1) * cw + sa);
+        b1 = 2 * A * ((A - 1) - (A + 1) * cw);
+        b2 = A * ((A + 1) - (A - 1) * cw - sa);
+        a0 = (A + 1) + (A - 1) * cw + sa;
+        a1 = -2 * ((A - 1) + (A + 1) * cw);
+        a2 = (A + 1) + (A - 1) * cw - sa;
+    } else {
+        b0 = A * ((A + 1) + (A - 1) * cw + sa);
+        b1 = -2 * A * ((A - 1) + (A + 1) * cw);
+        b2 = A * ((A + 1) + (A - 1) * cw - sa);
+        a0 = (A + 1) - (A - 1) * cw + sa;
+        a1 = 2 * ((A - 1) - (A + 1) * cw);
+        a2 = (A + 1) - (A - 1) * cw - sa;
+    }
+    c[0] = b0 / a0; c[1] = b1 / a0; c[2] = b2 / a0; c[3] = a1 / a0; c[4] = a2 / a0;
+}
+
+static void loud_design(dfx_t *d)
+{
+    shelf(d->ld_c[0], 0, LOUD_BASS_F, d->ld_gb);
+    shelf(d->ld_c[1], 1, LOUD_TREB_F, d->ld_gt);
+    double peak = d->ld_gb > d->ld_gt ? d->ld_gb : d->ld_gt;
+    d->ld_pre = pow(10.0, -peak / 20.0);
+}
+
+static double glide(double cur, double tgt)
+{
+    if (cur < tgt) return cur + LOUD_STEP < tgt ? cur + LOUD_STEP : tgt;
+    return cur - LOUD_STEP > tgt ? cur - LOUD_STEP : tgt;
+}
+
+/* staged frames [a, b) through the shelves; bypass when flat */
+static void loud_apply(dfx_t *d, size_t a, size_t b)
+{
+    if (b <= a) return;
+    if (d->ld_gb != d->ld_tb || d->ld_gt != d->ld_tt) {
+        d->ld_gb = glide(d->ld_gb, d->ld_tb);
+        d->ld_gt = glide(d->ld_gt, d->ld_tt);
+        loud_design(d);
+    }
+    if (d->ld_gb == 0.0 && d->ld_gt == 0.0) {
+        memset(d->ld_z, 0, sizeof d->ld_z);
+        return;
+    }
+    int32_t *p = d->st + a * CH;
+    const double in_k = d->ld_pre / 2147483648.0;
+    for (size_t f = a; f < b; f++) {
+        for (int ch = 0; ch < CH; ch++, p++) {
+            double x = *p * in_k;
+            for (int s = 0; s < 2; s++) {
+                const double *c = d->ld_c[s];
+                double *z = d->ld_z[s][ch];
+                double y = c[0] * x + c[1] * z[0] + c[2] * z[1] - c[3] * z[2] - c[4] * z[3];
+                z[1] = z[0]; z[0] = x; z[3] = z[2]; z[2] = y;
+                x = y;
+            }
+            double v = x * 2147483648.0;
+            *p = v >= 2147483647.0 ? INT32_MAX : v <= -2147483648.0 ? INT32_MIN : (int32_t)lrint(v);
+        }
+    }
+}
+
+/* LOUD_FILE + amplifier volume -> target boosts */
+static void loud_update(dfx_t *d)
+{
+    struct stat st;
+    time_t m = stat(LOUD_FILE, &st) == 0 ? (st.st_mtime ? st.st_mtime : 1) : 0;
+    if (m != d->ld_mtime) {
+        d->ld_mtime = m;
+        d->ld_on = 0; d->ld_ref = 10;
+        FILE *f = m ? fopen(LOUD_FILE, "r") : NULL;
+        if (f) {
+            char l[64];
+            while (fgets(l, sizeof l, f)) {
+                if (!strncmp(l, "on", 2) || !strncmp(l, "1", 1)) d->ld_on = 1;
+                else if (!strncmp(l, "ref=", 4)) d->ld_ref = atoi(l + 4);
+            }
+            fclose(f);
+        }
+    }
+    double tb = 0, tt = 0;
+    if (d->ld_on) {
+        FILE *f = fopen(AMP_STATE, "r");
+        int pos, max;
+        if (f) {
+            if (fscanf(f, "%d %d", &pos, &max) == 2 && max > 0 && pos >= 0 && pos <= max) {
+                double below = (double)(max - pos) - d->ld_ref;
+                if (below > 0) {
+                    tb = below * LOUD_BASS_K; if (tb > LOUD_BASS_MAX) tb = LOUD_BASS_MAX;
+                    tt = below * LOUD_TREB_K; if (tt > LOUD_TREB_MAX) tt = LOUD_TREB_MAX;
+                }
+            }
+            fclose(f);
+        }
+    }
+    /* 0.1 dB grid: no redesign for nothing */
+    d->ld_tb = round(tb * 10.0) / 10.0;
+    d->ld_tt = round(tt * 10.0) / 10.0;
+}
+
 /* put soxr output for `in` frames into staging */
 static void run_soxr(dfx_t *d, const void *in, size_t n)
 {
@@ -254,6 +385,7 @@ static void convert_chunk(dfx_t *d)
     snd_pcm_uframes_t n = fill < max ? fill : max;
     if (off + n > io->buffer_size) n = io->buffer_size - off;      /* no wrap inside */
     const uint8_t *src = d->ring + (size_t)off * d->fbytes;
+    size_t st0 = d->st_len;
 
     switch (d->mode) {
     case M_PASS:
@@ -272,6 +404,7 @@ static void convert_chunk(dfx_t *d)
         run_soxr(d, d->dpcm, np);
         break; }
     }
+    loud_apply(d, st0, d->st_len);
     d->hw += n;
     d->since_ptr += n;
 }
@@ -488,6 +621,11 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
     if (!d->ring || !d->st) { free_conv(d); return -ENOMEM; }
 
     d->f_mtime = read_filter(d);
+    memset(d->ld_z, 0, sizeof d->ld_z);
+    d->ld_mtime = -1;
+    loud_update(d);
+    d->ld_gb = d->ld_tb; d->ld_gt = d->ld_tt;        /* a new stream starts at the target */
+    loud_design(d);
     int bits = dsd_bits(io->format);
     if (bits) {
         unsigned long bitrate = (unsigned long)io->rate * bits;
@@ -750,7 +888,7 @@ static void *pump_thread(void *arg)
     struct sched_param sp = { .sched_priority = 45 };
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     struct pollfd pfd[8];
-    double next_log = 0, next_cfg = 0;
+    double next_log = 0, next_cfg = 0, next_loud = 0;
     for (;;) {
         pthread_mutex_lock(&d->lock);
         if (d->quit) { pthread_mutex_unlock(&d->lock); break; }
@@ -782,6 +920,11 @@ static void *pump_thread(void *arg)
                 d->f_mtime = read_filter(d);
                 if (g == d->f_gain3 || d->mode != M_PASS) make_soxr(d);
             }
+        }
+        /* loudness: switch on the web page, gain from the amplifier volume */
+        if (d->st && t >= next_loud) {
+            next_loud = t + 0.25;
+            loud_update(d);
         }
         if (active) {
             pump(d);

@@ -84,6 +84,10 @@
         <a class="menu-item" href="amplifier.php" data-t="m_amp">Усилитель, будильник, таймер</a>
         <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
         <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>
+        <a class="menu-item" href="backup.php" id="m-backup" data-t="m_backup">Сохранить настройки в файл</a>
+        <button class="menu-item" id="m-restore" data-t="m_restore">Восстановить настройки из файла</button>
+        <a class="menu-item" href="diag.php" data-t="m_diag">Диагностика</a>
+        <input type="file" id="restore-file" accept=".json,application/json" hidden>
         <button class="menu-item" id="m-reboot" data-t="m_reboot">Перезагрузить Фокс</button>
         <a class="menu-item" href="classic.php" data-t="m_classic">Классический интерфейс PureFox</a>
         <button class="menu-item dim" id="m-close" data-t="close">Закрыть</button>
