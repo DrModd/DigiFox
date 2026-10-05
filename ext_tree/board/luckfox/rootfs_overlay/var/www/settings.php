@@ -36,6 +36,26 @@
             <button class="hifi" data-src="ak4137">AK4137</button>
             <button class="hifi" data-src="fox" data-t="srcFox">ФОКС</button>
         </div>
+        <div id="src-filter" hidden>
+            <div class="set-label" data-t="fPhase">Фаза фильтра</div>
+            <div class="row3 tight">
+                <button class="hifi" data-f="phase" data-v="lin" data-t="fLin">ЛИНЕЙНАЯ</button>
+                <button class="hifi" data-f="phase" data-v="int" data-t="fInt">ПРОМЕЖ.</button>
+                <button class="hifi" data-f="phase" data-v="min" data-t="fMin">МИНИМАЛ.</button>
+            </div>
+            <div class="set-label" data-t="fRoll">Срез</div>
+            <div class="row3 tight">
+                <button class="hifi" data-f="rolloff" data-v="steep" data-t="fSteep">КРУТОЙ</button>
+                <button class="hifi" data-f="rolloff" data-v="std" data-t="fStd">ОБЫЧНЫЙ</button>
+                <button class="hifi" data-f="rolloff" data-v="slow" data-t="fSlow">ПОЛОГИЙ</button>
+            </div>
+            <div class="set-label" data-t="fGain">Запас по уровню</div>
+            <div class="row2 tight">
+                <button class="hifi" data-f="gain" data-v="0">0 dB</button>
+                <button class="hifi" data-f="gain" data-v="-3">−3 dB</button>
+            </div>
+            <div class="hint" data-t="fHint">Слышно примерно через секунду, можно сравнивать на ходу. Минимальная фаза — без «звона» перед атакой (как SHORT у AK4137). Пологий срез — мягче на самом верху (как SLOW). Запас −3 dB убирает перегрузку пиков между отсчётами на громких записях; громкость добирается усилителем.</div>
+        </div>
         <div class="hint" data-t="srcHint">AK4137 — Фокс отдаёт звук как есть, частоту пересчитывает AK4137 в усилителе. ФОКС — Фокс сам переводит всё в PCM 192 кГц / 32 бит: PCM через soxr, DSD64–DSD256 через дециматор; DSD512 в этом режиме не поддерживается. Переключение перезапускает плеер.</div>
     </section>
 

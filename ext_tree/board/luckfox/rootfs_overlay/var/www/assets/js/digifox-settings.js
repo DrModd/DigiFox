@@ -31,10 +31,13 @@
         dsdSwap: 'DSD channels', dsdSwapD: 'Swap the physical DSD lines',
         freqSwap: '44.1 / 48 families', freqSwapD: 'Swap the 44.1 and 48 kHz frequency domains',
         src: 'SAMPLE-RATE CONVERSION', srcFox: 'FOX',
+        fPhase: 'Filter phase', fLin: 'LINEAR', fInt: 'INTERM.', fMin: 'MINIMUM', fRoll: 'Roll-off',
+        fSteep: 'STEEP', fStd: 'NORMAL', fSlow: 'SLOW', fGain: 'Headroom',
+        fHint: 'Heard in about a second, so you can compare while listening. Minimum phase — no pre-ringing (like SHORT on the AK4137). Slow roll-off — gentler at the very top (like SLOW). −3 dB headroom avoids inter-sample overs on loud records; make up the level on the amplifier.',
         srcHint: 'AK4137 — the Fox sends audio as is, the AK4137 in the amplifier converts it. FOX — the Fox converts everything to PCM 192 kHz / 32 bit itself: PCM with soxr, DSD64–DSD256 with a decimator; DSD512 is not supported in this mode. Switching restarts the player.'
     };
     var SRC_NAME = RU ? { ak4137: 'в усилителе', fox: 'на Фоксе, 192 кГц' } : { ak4137: 'in the amplifier', fox: 'on the Fox, 192 kHz' };
-    var srcMode = null, srcBusy = false, akPresent = null;
+    var srcMode = null, srcBusy = false, akPresent = null, srcFilter = null;
     var NO_AK = RU ? 'AK4137 в усилителе не найдена — пересчитывает только Фокс' : 'No AK4137 in the amplifier — only the Fox can convert';
 
     function renderSrc() {
@@ -44,6 +47,14 @@
             b[i].className = 'hifi' + (srcMode === v ? ' on' : '');
             b[i].disabled = !srcMode || srcBusy || busy || (v === 'ak4137' && akPresent === false);
         }
+        var fb = document.querySelectorAll('[data-f]');
+        for (var k = 0; k < fb.length; k++) {
+            var fk = fb[k].getAttribute('data-f'), fv = fb[k].getAttribute('data-v');
+            fb[k].className = 'hifi' + (srcFilter && srcFilter[fk] === fv ? ' on' : '');
+            fb[k].disabled = !srcFilter || srcBusy;
+        }
+        var fp = document.getElementById('src-filter');
+        if (fp) fp.hidden = !(srcMode === 'fox' && srcFilter);
         var el = document.getElementById('v-src');
         if (el) el.textContent = akPresent === false ? NO_AK : srcMode ? SRC_NAME[srcMode] : '';
     }
@@ -52,7 +63,7 @@
         return (resp || fetch('src.php', { cache: 'no-store' })).then(function (r) {
             return r.json().then(function (j) {
                 if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-                srcMode = j.mode; akPresent = j.ak; renderSrc();
+                srcMode = j.mode; akPresent = j.ak; srcFilter = j.filter || null; renderSrc();
             });
         });
     }
@@ -194,6 +205,19 @@
             });
         }
         $('reboot-btn').addEventListener('click', reboot);
+        var fbs = document.querySelectorAll('[data-f]');
+        for (var q = 0; q < fbs.length; q++) {
+            fbs[q].addEventListener('click', function () {
+                var k = this.getAttribute('data-f'), v = this.getAttribute('data-v');
+                if (srcBusy || !srcFilter || srcFilter[k] === v) return;
+                srcBusy = true; renderSrc();
+                loadSrc(fetch('src.php', {
+                    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: encodeURIComponent(k) + '=' + encodeURIComponent(v)
+                })).then(function () { status(T.saved); }, function (e) { status(e.message || 'Ошибка'); })
+                  .then(function () { srcBusy = false; renderSrc(); });
+            });
+        }
         var sb = document.querySelectorAll('[data-src]');
         for (var s = 0; s < sb.length; s++) {
             sb[s].addEventListener('click', function () { applySrc(this.getAttribute('data-src')); });

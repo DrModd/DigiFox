@@ -24,6 +24,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/eventfd.h>
+#include <sys/stat.h>
 #include <sched.h>
 #include <time.h>
 #include <stdio.h>
@@ -44,6 +45,9 @@
 #define DSD_CHUNK   2048            /* bytes per channel per DSD step        */
 /* what the player sends, for the amplifier display (pfrate -> "@IN ...") */
 #define IN_FILE     "/tmp/digifox_in"
+/* filter settings (web page I2S): phase=lin|int|min rolloff=steep|std|slow gain=0|-3
+ * re-read by the pump thread, so a change is heard within a second */
+#define FILTER_FILE "/etc/digifox/srcfilter"
 
 enum { M_NONE, M_PASS, M_PCM, M_DSD };
 enum { Q_AUTO, Q_HQ, Q_VHQ };
@@ -83,6 +87,12 @@ typedef struct {
     uint8_t     *dbytes[CH];        /* DSD chunk, one byte stream per ch     */
     float       *dpcm;              /* DSD -> PCM (352.8/384k), interleaved  */
     double       ratio;             /* input frames per output frame         */
+    unsigned     sx_in;             /* soxr input rate (PCM rate / DSD mid)  */
+    int          sx_float;          /* soxr input is float (DSD)             */
+    int          f_phase;           /* 0 linear, 1 intermediate, 2 minimum  */
+    int          f_roll;            /* 0 standard, 1 steep, 2 slow           */
+    int          f_gain3;           /* 1: −3 dB headroom                     */
+    time_t       f_mtime;
 
     /* The pump thread keeps the I2S fed while the player is busy elsewhere
      * (Qobuz preparing the next track for gapless: tens of ms without a
@@ -415,6 +425,53 @@ static void pump_core(dfx_t *d)
 
 /* ------------------------------------------------------------ callbacks */
 
+/* read FILTER_FILE; returns its mtime (0 — no file: defaults) */
+static time_t read_filter(dfx_t *d)
+{
+    struct stat st;
+    d->f_phase = 0; d->f_roll = 0; d->f_gain3 = 0;
+    if (stat(FILTER_FILE, &st) < 0) return 0;
+    FILE *f = fopen(FILTER_FILE, "r");
+    if (!f) return 0;
+    char l[64];
+    while (fgets(l, sizeof l, f)) {
+        if (!strncmp(l, "phase=", 6))
+            d->f_phase = !strncmp(l + 6, "int", 3) ? 1 : !strncmp(l + 6, "min", 3) ? 2 : 0;
+        else if (!strncmp(l, "rolloff=", 8))
+            d->f_roll = !strncmp(l + 8, "steep", 5) ? 1 : !strncmp(l + 8, "slow", 4) ? 2 : 0;
+        else if (!strncmp(l, "gain=", 5))
+            d->f_gain3 = !strncmp(l + 5, "-3", 2);
+    }
+    fclose(f);
+    return st.st_mtime ? st.st_mtime : 1;
+}
+
+/* (re)build the resampler for the current stream and filter settings */
+static int make_soxr(dfx_t *d)
+{
+    if (d->sx) { soxr_delete(d->sx); d->sx = NULL; }
+    if (d->mode != M_PCM && d->mode != M_DSD) return 0;
+    int vhq = d->mode == M_PCM &&
+              (d->quality == Q_VHQ || (d->quality == Q_AUTO && d->sx_in <= 384000));
+    if (d->mode == M_DSD && d->quality == Q_VHQ) vhq = 1;
+    unsigned long recipe = (vhq ? SOXR_VHQ : SOXR_HQ) |
+        (d->f_phase == 1 ? SOXR_INTERMEDIATE_PHASE : d->f_phase == 2 ? SOXR_MINIMUM_PHASE : SOXR_LINEAR_PHASE) |
+        (d->f_roll == 1 ? SOXR_STEEP_FILTER : 0);
+    soxr_quality_spec_t q = soxr_quality_spec(recipe, 0);
+    if (d->f_roll == 2) q.passband_end = 0.80;     /* gentle: 0 dB to 80 % of Nyquist */
+    soxr_io_spec_t ios = soxr_io_spec(d->sx_float ? SOXR_FLOAT32_I : SOXR_INT32_I, SOXR_INT32_I);
+    if (d->f_gain3) ios.scale = 0.70794578;        /* −3 dB */
+    soxr_runtime_spec_t rt = soxr_runtime_spec(1);
+    soxr_error_t serr = NULL;
+    d->sx = soxr_create(d->sx_in, OUT_RATE, CH, &serr, &ios, &q, &rt);
+    if (!d->sx || serr) {
+        SNDERR("digifox: soxr: %s", serr ? serr : "?");
+        if (d->sx) { soxr_delete(d->sx); d->sx = NULL; }
+        return -EINVAL;
+    }
+    return 0;
+}
+
 static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params)
 {
     dfx_t *d = io->private_data;
@@ -430,8 +487,7 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
     d->st = malloc(sizeof(int32_t) * CH * ST_CAP);
     if (!d->ring || !d->st) { free_conv(d); return -ENOMEM; }
 
-    soxr_error_t serr = NULL;
-    soxr_runtime_spec_t rt = soxr_runtime_spec(1);
+    d->f_mtime = read_filter(d);
     int bits = dsd_bits(io->format);
     if (bits) {
         unsigned long bitrate = (unsigned long)io->rate * bits;
@@ -452,23 +508,19 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
         }
         d->dpcm = malloc(sizeof(float) * CH * (DSD_CHUNK * 2 + 64));
         if (!d->dpcm) { free_conv(d); return -ENOMEM; }
-        unsigned mid = dsd2pcm_out_rate(d->dd[0]);
-        soxr_io_spec_t ios = soxr_io_spec(SOXR_FLOAT32_I, SOXR_INT32_I);
-        soxr_quality_spec_t q = soxr_quality_spec(d->quality == Q_VHQ ? SOXR_VHQ : SOXR_HQ, 0);
-        d->sx = soxr_create(mid, OUT_RATE, CH, &serr, &ios, &q, &rt);
-    } else if (io->rate == OUT_RATE) {
+        d->sx_in = dsd2pcm_out_rate(d->dd[0]);
+        d->sx_float = 1;
+    } else if (io->rate == OUT_RATE && !d->f_gain3) {
         d->mode = M_PASS;
     } else {
         d->mode = M_PCM;
         d->pin = malloc(sizeof(int32_t) * CH * PCM_CHUNK);
         if (!d->pin) { free_conv(d); return -ENOMEM; }
-        int vhq = d->quality == Q_VHQ || (d->quality == Q_AUTO && io->rate <= 384000);
-        soxr_io_spec_t ios = soxr_io_spec(SOXR_INT32_I, SOXR_INT32_I);
-        soxr_quality_spec_t q = soxr_quality_spec(vhq ? SOXR_VHQ : SOXR_HQ, 0);
-        d->sx = soxr_create(io->rate, OUT_RATE, CH, &serr, &ios, &q, &rt);
+        d->sx_in = io->rate;
+        d->sx_float = 0;
     }
-    if ((d->mode == M_PCM || d->mode == M_DSD) && (!d->sx || serr)) {
-        SNDERR("digifox: soxr: %s", serr ? serr : "?");
+    /* 192 kHz with −3 dB: through soxr at 1:1, which only scales */
+    if ((d->mode == M_PCM || d->mode == M_DSD) && make_soxr(d) < 0) {
         free_conv(d);
         return -EINVAL;
     }
@@ -698,7 +750,7 @@ static void *pump_thread(void *arg)
     struct sched_param sp = { .sched_priority = 45 };
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     struct pollfd pfd[8];
-    double next_log = 0;
+    double next_log = 0, next_cfg = 0;
     for (;;) {
         pthread_mutex_lock(&d->lock);
         if (d->quit) { pthread_mutex_unlock(&d->lock); break; }
@@ -720,6 +772,17 @@ static void *pump_thread(void *arg)
             }
         }
         int nf = 0, active = d->running && d->st;
+        /* filter settings changed on the web page: rebuild the resampler */
+        if (d->st && (d->mode == M_PCM || d->mode == M_DSD) && t >= next_cfg) {
+            next_cfg = t + 0.5;
+            struct stat cs;
+            time_t m = stat(FILTER_FILE, &cs) == 0 ? (cs.st_mtime ? cs.st_mtime : 1) : 0;
+            if (m != d->f_mtime) {
+                int g = d->f_gain3;
+                d->f_mtime = read_filter(d);
+                if (g == d->f_gain3 || d->mode != M_PASS) make_soxr(d);
+            }
+        }
         if (active) {
             pump(d);
             /* data waiting for room in the I2S buffer: also wake on the slave */
