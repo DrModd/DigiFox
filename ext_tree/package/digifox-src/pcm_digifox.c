@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <math.h>
 #include <poll.h>
+#include <time.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +56,9 @@ typedef struct {
     snd_pcm_format_t fmt;
 
     uint8_t     *ring;              /* buffer_size frames, input format      */
-    snd_pcm_uframes_t wpos, hw;     /* frames written / consumed (monotonic) */
+    /* 64-bit on purpose: snd_pcm_uframes_t is 32 bits on the Fox and would
+     * wrap after ~50 min of DSD256 (x % buffer_size jumps at the wrap) */
+    uint64_t     wpos, hw;          /* frames written / consumed (monotonic) */
     snd_pcm_uframes_t since_ptr;    /* consumed since the last pointer call  */
     int          running;
 
@@ -108,7 +111,9 @@ static int setup_slave(dfx_t *d)
     snd_pcm_sw_params_alloca(&sp);
     int err;
     unsigned rate = OUT_RATE;
-    snd_pcm_uframes_t period = 2048, buffer = 8192;   /* ~10.7 ms / ~43 ms */
+    /* ~10.7 ms periods, ~85 ms buffer: data only moves while the player is
+     * inside an ALSA call, so the slave must bridge the player's sleeps */
+    snd_pcm_uframes_t period = 2048, buffer = 16384;
 
     if ((err = snd_pcm_hw_params_any(d->slave, hp)) < 0) return err;
     if ((err = snd_pcm_hw_params_set_access(d->slave, hp, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) return err;
@@ -187,13 +192,13 @@ static void run_soxr(dfx_t *d, const void *in, size_t n)
 static void convert_chunk(dfx_t *d)
 {
     snd_pcm_ioplug_t *io = &d->io;
-    snd_pcm_uframes_t fill = d->wpos - d->hw;
+    snd_pcm_uframes_t fill = (snd_pcm_uframes_t)(d->wpos - d->hw);
     snd_pcm_uframes_t lim = io->buffer_size - 1 - d->since_ptr;   /* see pointer() */
     if (fill > lim) fill = lim;
     if (!fill) return;
 
     snd_pcm_uframes_t max = d->mode == M_DSD ? DSD_CHUNK / d->dsd_bpc : PCM_CHUNK;
-    snd_pcm_uframes_t off = d->hw % io->buffer_size;
+    snd_pcm_uframes_t off = (snd_pcm_uframes_t)(d->hw % io->buffer_size);
     snd_pcm_uframes_t n = fill < max ? fill : max;
     if (off + n > io->buffer_size) n = io->buffer_size - off;      /* no wrap inside */
     const uint8_t *src = d->ring + (size_t)off * d->fbytes;
@@ -246,7 +251,7 @@ static void pump(dfx_t *d)
             if (w == 0) return;
         }
         d->st_len = d->st_pos = 0;
-        snd_pcm_uframes_t before = d->hw;
+        uint64_t before = d->hw;
         convert_chunk(d);
         if (d->hw == before && !d->st_len) return;   /* nothing left to do */
     }
@@ -321,9 +326,14 @@ static int dfx_hw_free(snd_pcm_ioplug_t *io)
     return 0;
 }
 
+#ifndef DFX_POS0          /* tests start near 2^32 to check the wrap */
+#define DFX_POS0 0
+#endif
+
 static void reset_stream(dfx_t *d)
 {
-    d->wpos = d->hw = d->since_ptr = 0;
+    d->wpos = d->hw = DFX_POS0;
+    d->since_ptr = 0;
     d->st_len = d->st_pos = 0;
     if (d->sx) soxr_clear(d->sx);
     for (int c = 0; c < CH; c++) if (d->dd[c]) dsd2pcm_reset(d->dd[c]);
@@ -354,14 +364,33 @@ static int dfx_stop(snd_pcm_ioplug_t *io)
     return 0;
 }
 
+static int dfx_pause(snd_pcm_ioplug_t *io, int enable)
+{
+    dfx_t *d = io->private_data;
+    if (enable) {
+        d->running = 0;
+        if (snd_pcm_pause(d->slave, 1) < 0) snd_pcm_drop(d->slave);
+    } else {
+        if (snd_pcm_state(d->slave) == SND_PCM_STATE_PAUSED) snd_pcm_pause(d->slave, 0);
+        else snd_pcm_prepare(d->slave);
+        d->running = 1;
+        pump(d);
+    }
+    return 0;
+}
+
 static snd_pcm_sframes_t dfx_transfer(snd_pcm_ioplug_t *io, const snd_pcm_channel_area_t *areas,
                                       snd_pcm_uframes_t offset, snd_pcm_uframes_t size)
 {
     dfx_t *d = io->private_data;
     const uint8_t *src = (const uint8_t *)areas[0].addr + (areas[0].first + areas[0].step * offset) / 8;
     snd_pcm_uframes_t left = size;
+    /* rewind/forward/reset are not supported: never let the writer pass the
+     * reader, drop what does not fit (cannot happen with normal writes) */
+    snd_pcm_uframes_t room = io->buffer_size - (snd_pcm_uframes_t)(d->wpos - d->hw);
+    if (left > room) left = room;
     while (left) {
-        snd_pcm_uframes_t off = d->wpos % io->buffer_size;
+        snd_pcm_uframes_t off = (snd_pcm_uframes_t)(d->wpos % io->buffer_size);
         snd_pcm_uframes_t n = io->buffer_size - off;
         if (n > left) n = left;
         memcpy(d->ring + (size_t)off * d->fbytes, src, (size_t)n * d->fbytes);
@@ -381,15 +410,25 @@ static snd_pcm_sframes_t dfx_pointer(snd_pcm_ioplug_t *io)
     dfx_t *d = io->private_data;
     pump(d);
     d->since_ptr = 0;
-    return d->hw % io->buffer_size;
+    return (snd_pcm_sframes_t)(d->hw % io->buffer_size);
 }
 
+static double now_s(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec + t.tv_nsec * 1e-9;
+}
+
+/* Blocking even for non-blocking players (MPD): at most the ring + slave
+ * buffer, i.e. well under a second, and bounded by time in any case. */
 static int dfx_drain(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
     if (!d->running) d->running = 1;
+    double limit = now_s() + 2.0 + (double)io->buffer_size / io->rate;
     /* everything the player wrote, through the converters, into the slave */
-    for (int guard = 0; guard < 100000; guard++) {
+    while (now_s() < limit) {
         d->since_ptr = 0;            /* nobody reads the pointer meanwhile */
         pump(d);
         if (d->hw == d->wpos && d->st_pos >= d->st_len) break;
@@ -402,7 +441,7 @@ static int dfx_drain(snd_pcm_ioplug_t *io)
         size_t odone = 0;
         soxr_process(d->sx, NULL, 0, NULL, d->st, ST_CAP, &odone);
         d->st_len = odone;
-        for (int guard = 0; guard < 1000 && d->st_pos < d->st_len; guard++) {
+        while (d->st_pos < d->st_len && now_s() < limit) {
             pump(d);
             if (d->st_pos >= d->st_len) break;
             if (snd_pcm_state(d->slave) == SND_PCM_STATE_PREPARED) snd_pcm_start(d->slave);
@@ -447,8 +486,15 @@ static int dfx_poll_revents(snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned i
     unsigned short r = 0;
     snd_pcm_poll_descriptors_revents(d->slave, pfd, nfds, &r);
     pump(d);
-    snd_pcm_uframes_t free_ = io->buffer_size - (d->wpos - d->hw);
-    *revents = free_ >= io->period_size ? POLLOUT : 0;
+    snd_pcm_uframes_t free_ = io->buffer_size - (snd_pcm_uframes_t)(d->wpos - d->hw);
+    unsigned short ev = free_ >= io->period_size ? POLLOUT : 0;
+    /* a slave that is broken for good must not leave the player spinning */
+    if (r & (POLLERR | POLLNVAL)) {
+        snd_pcm_state_t st = snd_pcm_state(d->slave);
+        if (st == SND_PCM_STATE_DISCONNECTED || st == SND_PCM_STATE_OPEN)
+            ev |= POLLERR;
+    }
+    *revents = ev;
     return 0;
 }
 
@@ -472,6 +518,7 @@ static const snd_pcm_ioplug_callback_t dfx_cb = {
     .hw_free = dfx_hw_free,
     .prepare = dfx_prepare,
     .drain = dfx_drain,
+    .pause = dfx_pause,
     .delay = dfx_delay,
     .poll_descriptors_count = dfx_poll_count,
     .poll_descriptors = dfx_poll_desc,
