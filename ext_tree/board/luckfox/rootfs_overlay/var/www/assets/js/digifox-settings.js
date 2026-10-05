@@ -33,7 +33,7 @@
     };
 
     function $(id) { return document.getElementById(id); }
-    var cfg = null, usb = false, busy = false, msgTimer = null;
+    var cfg = null, usb = false, busy = false, msgTimer = null, fixingSub = false;
     // the reboot banner survives page reloads until the Fox actually reboots
     var pendingReboot = false;
     try { pendingReboot = sessionStorage.getItem('df_i2s_reboot') === '1'; } catch (e) {}
@@ -67,6 +67,12 @@
             cfg = r[0]; usb = !!(r[1] && r[1].enabled);
             $('dot').className = 'dot on';
             render();
+            // DigiD D1: only the plain stereo I2S output is used. If an older
+            // setup left 8CH / L/R / ±L/±R active, return to STD once.
+            if (cfg.submode && cfg.submode !== 'std' && !fixingSub) {
+                fixingSub = true;
+                apply('submode', 'std');
+            }
         }).catch(function () {
             $('dot').className = 'dot';
             status(T.noLink);
@@ -91,9 +97,7 @@
         if (cfg) {
             $('v-mode').textContent = cfg.mode === 'ext' ? T.ext : T.pll;
             $('v-mclk').textContent = (cfg.mclk || '?') + ' × FS';
-            $('v-sub').textContent = T.sub[cfg.submode] || cfg.submode;
         }
-        if (usb) $('sub-hint').textContent = T.usbStd;
         $('reboot-banner').hidden = !pendingReboot;
     }
 

@@ -49,17 +49,6 @@
     </section>
 
     <section class="panel">
-        <div class="set-head"><div class="cap grow" data-t="output">ВЫХОД</div><div class="set-val" id="v-sub"></div></div>
-        <div class="row4">
-            <button class="hifi" data-k="submode" data-v="std">STD</button>
-            <button class="hifi" data-k="submode" data-v="8ch">8CH</button>
-            <button class="hifi" data-k="submode" data-v="lr">L / R</button>
-            <button class="hifi" data-k="submode" data-v="plr">±L / ±R</button>
-        </div>
-        <div class="hint" id="sub-hint" data-t="outputHint">STD — стерео; 8CH — 8 каналов до 192 кГц; L/R — дуал-моно; ±L/±R — дуал-моно с балансным выходом. Применяется сразу.</div>
-    </section>
-
-    <section class="panel">
         <div class="cap" data-t="swaps">ПЕРЕСТАНОВКИ</div>
         <div class="switch-row">
             <div class="grow"><div class="t" data-t="pcmSwap">Каналы PCM</div><div class="d" data-t="pcmSwapD">Поменять местами левый и правый</div></div>
