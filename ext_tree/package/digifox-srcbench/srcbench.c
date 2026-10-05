@@ -12,6 +12,7 @@
  *
  *   digifox-srcbench            all tests, 8 s of audio each
  *   digifox-srcbench -s 3       3 s of audio each (faster, less precise)
+ *   digifox-srcbench -o 768     output 768 kHz instead of 192 kHz
  *
  * GPL-2.0-or-later. DigiFox.
  */
@@ -25,7 +26,7 @@
 #include <soxr.h>
 #include "dsd2pcm.h"
 
-#define OUT_RATE   192000.0
+static double OUT_RATE = 192000.0;   /* -o 768 for 768 kHz output */
 #define CH         2
 #define BLOCK      4096          /* input frames per soxr_process call */
 
@@ -165,7 +166,14 @@ static void row(const char *name, double hq, double vhq)
 int main(int argc, char **argv)
 {
     double sec = 8;
-    if (argc > 2 && strcmp(argv[1], "-s") == 0) sec = atof(argv[2]);
+    for (int a = 1; a + 1 < argc; a += 2) {
+        if (strcmp(argv[a], "-s") == 0) sec = atof(argv[a + 1]);
+        else if (strcmp(argv[a], "-o") == 0) {
+            double o = atof(argv[a + 1]);
+            OUT_RATE = o < 2000 ? o * 1000 : o;
+        }
+    }
+    if (OUT_RATE < 44100 || OUT_RATE > 1536000) OUT_RATE = 192000;
     if (sec < 1) sec = 1;
 
     const char *eng = "?";
@@ -173,15 +181,16 @@ int main(int argc, char **argv)
     FILE *f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "r");
     if (f) { if (fscanf(f, "%ld", &mhz) == 1) mhz /= 1000; fclose(f); }
 
-    printf("DigiFox: пересчёт в 192 кГц вместо AK4137 (стерео, %g с звука на тест)\n", sec);
+    printf("DigiFox: пересчёт в %g кГц вместо AK4137 (стерео, %g с звука на тест)\n", OUT_RATE / 1000, sec);
     printf("Процессор: %ld ядро(а), %ld МГц\n", sysconf(_SC_NPROCESSORS_ONLN), mhz);
     printf("Загрузка одного ядра (100 %% = всё время ядра):\n\n");
     printf("  %-12s %9s   %9s\n", "вход", "soxr HQ", "soxr VHQ");
 
-    static const double rates[] = { 44100, 48000, 88200, 96000, 176400, 352800, 384000, 705600, 768000 };
+    static const double rates[] = { 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000 };
     double w0 = wall_now();
     for (unsigned i = 0; i < sizeof rates / sizeof rates[0]; i++) {
         char name[16];
+        if (rates[i] == OUT_RATE) continue;      /* same rate: passed through */
         snprintf(name, sizeof name, "%.1f kHz", rates[i] / 1000);
         double hq = bench_pcm(rates[i], SOXR_HQ, sec, &eng);
         double vhq = bench_pcm(rates[i], SOXR_VHQ, sec, &eng);
@@ -207,6 +216,6 @@ int main(int argc, char **argv)
     bench_pcm(44100, SOXR_HQ, 1, &e_hq);
     bench_pcm(44100, SOXR_VHQ, 1, &e_vhq);
     printf("\nДвижок soxr: HQ — %s, VHQ — %s. Время теста: %.0f с.\n", e_hq, e_vhq, wall_now() - w0);
-    printf("192 кГц не пересчитывается (идёт как есть). DSD: многоступенчатый дециматор до 352,8 кГц + soxr.\n");
+    printf("%g кГц не пересчитывается (идёт как есть). DSD: многоступенчатый дециматор до 352,8 кГц + soxr.\n", OUT_RATE / 1000);
     return 0;
 }
