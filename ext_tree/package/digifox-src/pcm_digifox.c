@@ -36,6 +36,7 @@
 #define OUT_RATE    192000
 #define CH          2
 #define ST_CAP      32768           /* staging, output frames               */
+#define ST_ROOM     12288           /* free staging needed to convert a chunk */
 #define PCM_CHUNK   2048            /* input frames per PCM conversion step  */
 #define DSD_CHUNK   4096            /* bytes per channel per DSD step        */
 /* what the player sends, for the amplifier display (pfrate -> "@IN ...") */
@@ -68,6 +69,7 @@ typedef struct {
 
     int32_t     *st;                /* staging, interleaved S32              */
     size_t       st_len, st_pos;
+    int          final;             /* drain: write the last partial period  */
 
     soxr_t       sx;
     dsd2pcm_t   *dd[CH];
@@ -250,27 +252,52 @@ static int slave_recover(dfx_t *d, int err)
     return err;
 }
 
+/* staging -> slave. The RV1106 I2S (see uac2_router) starts its DMA on the
+ * first write whatever start_threshold says, and handles only whole periods
+ * well. So: write whole periods only, and the first write after prepare only
+ * once half a slave buffer is staged. Returns 1 when the slave is full. */
+static int flush(dfx_t *d)
+{
+    int full = 0;
+    for (int guard = 0; guard < 64; guard++) {
+        snd_pcm_uframes_t pending = d->st_len - d->st_pos;
+        if (!pending) break;
+        snd_pcm_state_t state = snd_pcm_state(d->slave);
+        if (state == SND_PCM_STATE_XRUN || state == SND_PCM_STATE_SUSPENDED) {
+            if (slave_recover(d, -EPIPE) < 0) { full = 1; break; }
+            continue;
+        }
+        if (state == SND_PCM_STATE_PREPARED && !d->final && pending < d->s_buffer / 2)
+            break;                                     /* pre-buffer first */
+        snd_pcm_sframes_t av = snd_pcm_avail_update(d->slave);
+        if (av < 0) { if (slave_recover(d, (int)av) < 0) { full = 1; break; } continue; }
+        snd_pcm_uframes_t n = pending < (snd_pcm_uframes_t)av ? pending : (snd_pcm_uframes_t)av;
+        if (!d->final || n < pending) n -= n % d->s_period;
+        if (!n) { full = pending >= d->s_period || d->final; break; }
+        snd_pcm_sframes_t w = snd_pcm_writei(d->slave, d->st + d->st_pos * CH, n);
+        if (w == -EAGAIN) { full = 1; break; }
+        if (w < 0) { if (slave_recover(d, (int)w) < 0) { full = 1; break; } continue; }
+        d->st_pos += w;
+    }
+    if (d->st_pos) {                                   /* keep the remainder in front */
+        size_t left = d->st_len - d->st_pos;
+        if (left) memmove(d->st, d->st + d->st_pos * CH, left * CH * sizeof(int32_t));
+        d->st_len = left;
+        d->st_pos = 0;
+    }
+    return full;
+}
+
 /* move data: staging -> slave, ring -> staging. Never blocks. */
 static void pump(dfx_t *d)
 {
     if (!d->running || !d->st) return;
     for (int guard = 0; guard < 256; guard++) {
-        while (d->st_pos < d->st_len) {
-            snd_pcm_sframes_t av = snd_pcm_avail_update(d->slave);
-            if (av < 0) { if (slave_recover(d, (int)av) < 0) return; continue; }
-            if (av == 0) return;
-            snd_pcm_uframes_t n = d->st_len - d->st_pos;
-            if ((snd_pcm_uframes_t)av < n) n = av;
-            snd_pcm_sframes_t w = snd_pcm_writei(d->slave, d->st + d->st_pos * CH, n);
-            if (w == -EAGAIN) return;
-            if (w < 0) { if (slave_recover(d, (int)w) < 0) return; continue; }
-            d->st_pos += w;
-            if (w == 0) return;
-        }
-        d->st_len = d->st_pos = 0;
+        if (flush(d)) return;                          /* slave full */
+        if (ST_CAP - d->st_len < ST_ROOM) return;      /* cannot happen, but be safe */
         uint64_t before = d->hw;
         convert_chunk(d);
-        if (d->hw == before && !d->st_len) return;   /* nothing left to do */
+        if (d->hw == before) return;                   /* ring empty */
     }
 }
 
@@ -359,6 +386,7 @@ static void reset_stream(dfx_t *d)
 {
     d->wpos = d->hw = DFX_POS0;
     d->since_ptr = 0;
+    d->final = 0;
     d->st_len = d->st_pos = 0;
     if (d->sx) soxr_clear(d->sx);
     for (int c = 0; c < CH; c++) if (d->dd[c]) dsd2pcm_reset(d->dd[c]);
@@ -452,27 +480,31 @@ static int dfx_drain(snd_pcm_ioplug_t *io)
     dfx_t *d = io->private_data;
     if (!d->running) d->running = 1;
     double limit = now_s() + 2.0 + (double)io->buffer_size / io->rate;
-    /* everything the player wrote, through the converters, into the slave */
+    /* everything the player wrote, through the converters, into staging/slave */
     while (now_s() < limit) {
         d->since_ptr = 0;            /* nobody reads the pointer meanwhile */
         pump(d);
-        if (d->hw == d->wpos && d->st_pos >= d->st_len) break;
-        if (snd_pcm_state(d->slave) == SND_PCM_STATE_PREPARED) snd_pcm_start(d->slave);
+        if (d->hw == d->wpos) break;
         snd_pcm_wait(d->slave, 100);
     }
-    /* soxr tail */
-    if (d->sx) {
-        d->st_len = d->st_pos = 0;
+    /* soxr tail, then pad the last period with silence */
+    if (d->sx && ST_CAP - d->st_len > 4096) {
         size_t odone = 0;
-        soxr_process(d->sx, NULL, 0, NULL, d->st, ST_CAP, &odone);
-        d->st_len = odone;
-        while (d->st_pos < d->st_len && now_s() < limit) {
-            pump(d);
-            if (d->st_pos >= d->st_len) break;
-            if (snd_pcm_state(d->slave) == SND_PCM_STATE_PREPARED) snd_pcm_start(d->slave);
-            snd_pcm_wait(d->slave, 100);
-        }
+        soxr_process(d->sx, NULL, 0, NULL, d->st + d->st_len * CH, ST_CAP - d->st_len - 4096, &odone);
+        d->st_len += odone;
     }
+    size_t part = d->st_len % d->s_period;
+    if (part && d->st_len + (d->s_period - part) <= ST_CAP) {
+        memset(d->st + d->st_len * CH, 0, (d->s_period - part) * CH * sizeof(int32_t));
+        d->st_len += d->s_period - part;
+    }
+    d->final = 1;
+    while (d->st_pos < d->st_len && now_s() < limit) {
+        if (!flush(d) && d->st_pos >= d->st_len) break;
+        if (d->st_len == 0) break;
+        snd_pcm_wait(d->slave, 100);
+    }
+    d->final = 0;
     if (snd_pcm_state(d->slave) == SND_PCM_STATE_PREPARED) snd_pcm_start(d->slave);
     snd_pcm_nonblock(d->slave, 0);
     snd_pcm_drain(d->slave);
