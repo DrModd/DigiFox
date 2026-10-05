@@ -34,10 +34,10 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 # on the same tty.
 # console::respawn:/sbin/getty -L  console 0 vt100
 
-# DigiFox: the FIQ debugger console (UART2 / ttyFIQ0) is the link to the
-# DigiD D1 amplifier MCU (STM32, pf_link). pfctl serve reads commands and
-# reports stream rate/format, player, track. No shell on this UART.
-ttyFIQ0::respawn:/usr/bin/pfctl serve
+# DigiFox: UART2 (pins 1/2, plain 8250 port ttyS2, not the FIQ console) is the
+# link to the DigiD D1 amplifier MCU (STM32, pf_link). pfctl serve reads
+# commands and reports stream rate/format, player, track, time. No shell here.
+ttyS2::respawn:/usr/bin/pfctl serve
 
 # Stuff to do for the 3-finger salute
 #::ctrlaltdel:/sbin/reboot

@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# digifox-ampflash <файл.bin> — прошить усилитель DigiD D1 (STM32F103) через UART2.
+#
+#   1. просит прошивку усилителя перейти во встроенный загрузчик (@DFU);
+#      если усилитель уже в загрузчике (прошлая попытка прервалась) — тоже работает
+#   2. останавливает pfctl serve (порт свободен, /tmp/amp_flash.lock)
+#   3. stm32flash: 115200 8E1, запись + проверка, затем сброс МК
+#   4. pfctl serve снова занимает порт, связь восстанавливается сама
+#
+# Последние 2 КБ флеша (настройки и коды пульта) не стираются:
+# stm32flash стирает только страницы, занятые прошивкой (до 62 КБ).
+
+F=$1
+DEV=/dev/ttyS2
+LOCK=/tmp/amp_flash.lock
+MAX=63488                                   # 62 КБ: прошивка без страниц настроек
+
+say()  { echo "$*"; }
+fail() { say "ОШИБКА: $*"; rm -f "$LOCK"; exit 1; }
+
+[ -n "$F" ] && [ -f "$F" ] || fail "нет файла прошивки"
+size=$(wc -c < "$F")
+[ "$size" -ge 4096 ] && [ "$size" -le $MAX ] || fail "размер $size байт — это не прошивка усилителя (нужно 4..62 КБ, файл .bin)"
+# вектор сброса: первые два слова — стек в ОЗУ 0x2000xxxx и адрес во флеше 0x0800xxxx
+set -- $(od -An -tx4 -N8 "$F")
+case "$1" in 2000[0-4]*) ;; *) fail "файл не похож на прошивку STM32F103 (стек $1)" ;; esac
+case "$2" in 0800[0-f]*) ;; *) fail "файл не похож на прошивку STM32F103 (сброс $2)" ;; esac
+command -v stm32flash >/dev/null || fail "нет stm32flash"
+[ -c "$DEV" ] || fail "нет порта $DEV (нужна прошивка DigiFox 1.0.11 или новее)"
+
+say "Прошивка: $(basename "$F"), $size байт"
+say "Текущая версия усилителя: $(cat /tmp/amp_ver 2>/dev/null || echo 'неизвестна')"
+
+say "Перевожу усилитель в режим обновления…"
+i=0
+while [ -f /tmp/amp_req ] && [ $i -lt 20 ]; do sleep 0.2; i=$((i + 1)); done
+echo dfu > /tmp/amp_req.flash && mv /tmp/amp_req.flash /tmp/amp_req
+sleep 1                                     # pfctl отправит @DFU
+
+touch "$LOCK"
+# остановить pfctl serve (init перезапустит его, и он будет ждать снятия LOCK)
+for pid in $(ps | awk '/pfctl serve/ && !/awk/ {print $1}'); do kill "$pid" 2>/dev/null; done
+killall pfrate 2>/dev/null
+sleep 2                                     # усилитель сохраняет настройки и перезапускается
+
+rc=1
+for try in 1 2 3; do
+    say "Прошиваю (попытка $try)…"
+    rm -f /tmp/amp_flash.rc
+    # прогресс — каждые 10 %, плюс строки о чипе и ошибки
+    ( stm32flash -b 115200 -m 8e1 -w "$F" -v -R "$DEV" 2>&1; echo $? > /tmp/amp_flash.rc ) |
+        tr '\r' '\n' | awk '
+        /\([0-9.]+%\)/ { p = $0; sub(/.*\(/, "", p); sub(/%.*/, "", p); p = int(p)
+                         if (p >= np) { printf "  %d %%\n", p; np = p - p % 10 + 10 }
+                         next }
+        /Device ID|Interface|Fail|fail|rror|Unexpected|annot|NACK/ { print "  " $0 }'
+    rc=$(cat /tmp/amp_flash.rc 2>/dev/null || echo 1)
+    [ "$rc" = 0 ] && break
+    sleep 1
+done
+rm -f /tmp/amp_flash.rc "$LOCK"             # pfctl serve снова займёт порт
+
+if [ "$rc" = 0 ]; then
+    say "Готово: прошивка записана и проверена, усилитель перезапущен."
+    say "Через несколько секунд он снова появится на связи."
+    exit 0
+fi
+say "ОШИБКА: усилитель не ответил загрузчиком или запись не прошла."
+say "Если на экране усилителя FIRMWARE UPDATE — запустите обновление ещё раз."
+say "Если усилитель не отвечает совсем — выключите и включите его питание."
+exit 1

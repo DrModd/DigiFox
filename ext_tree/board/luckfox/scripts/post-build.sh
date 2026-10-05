@@ -143,3 +143,7 @@ if [ -f "$QC" ]; then
         echo "WARNING: qobuz-connect: name string not found at $QC_NAME_OFFSET, left as is" >&2
     fi
 fi
+
+# DigiFox: alarm, time zone (written by the web UI, kept by /opt/update.sh)
+mkdir -p "$TARGET_DIR/etc/digifox"
+chmod 0777 "$TARGET_DIR/etc/digifox"

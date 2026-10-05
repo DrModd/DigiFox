@@ -81,6 +81,7 @@
 <div class="sheet" id="menu" hidden>
     <div class="sheet-box">
         <div class="cap">DIGIFOX v<?php echo htmlspecialchars(VERSION); ?></div>
+        <a class="menu-item" href="amplifier.php" data-t="m_amp">Усилитель, будильник, таймер</a>
         <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
         <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>
         <button class="menu-item" id="m-reboot" data-t="m_reboot">Перезагрузить Фокс</button>

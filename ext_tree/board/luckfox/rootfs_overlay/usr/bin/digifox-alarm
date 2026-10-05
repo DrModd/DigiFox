@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# digifox-alarm — будильник DigiD D1 (запускает pfctl serve в ALARM_TIME).
+#   1. запускает плеер ALARM_SRC (keep — не трогать текущий)
+#   2. включает усилитель (@APWR on)
+#   3. ставит громкость на 20 дБ тише ALARM_VOL и плавно поднимает до неё
+# Настройки — /etc/digifox/alarm.conf (пишет amp.php):
+#   ALARM_ON=1  ALARM_TIME=07:00  ALARM_DAYS=12345  ALARM_SRC=aplayer  ALARM_VOL=-30
+#   (дни: 1 — понедельник ... 7 — воскресенье; громкость в дБ, 0 — максимум)
+
+URL=http://127.0.0.1
+. /etc/digifox/alarm.conf 2>/dev/null
+[ "$ALARM_ON" = 1 ] || exit 0
+
+# запрос усилителю через pfctl serve (один файл-запрос; ждём, пока прошлый заберут)
+amp() {
+    i=0
+    while [ -f /tmp/amp_req ] && [ $i -lt 20 ]; do sleep 0.2; i=$((i + 1)); done
+    echo "$1" > /tmp/amp_req.alarm && mv /tmp/amp_req.alarm /tmp/amp_req
+}
+state() { cut -d' ' -f"$1" /tmp/amp_state 2>/dev/null; }
+
+# 1. плеер
+if [ -n "$ALARM_SRC" ] && [ "$ALARM_SRC" != keep ]; then
+    [ -f /etc/usb_to_i2s.state ] && wget -q -T 60 -O /dev/null --post-data=action=disable "$URL/usb_to_i2s.php"
+    wget -q -T 60 -O /dev/null --post-data="service=$ALARM_SRC" "$URL/handle_service.php"
+fi
+
+# 2. усилитель (если уже включён — только громкость)
+[ "$(state 5)" = 1 ] || amp "pwr on"
+i=0
+while [ "$(state 5)" != 1 ] && [ $i -lt 100 ]; do sleep 0.2; i=$((i + 1)); done
+[ "$(state 5)" = 1 ] || exit 1
+
+# 3. громкость: позиция = max + дБ
+max=$(state 2); max=${max:-80}
+target=$((max + ${ALARM_VOL:--30}))
+[ $target -lt 0 ] && target=0
+[ $target -gt $max ] && target=$max
+pos=$((target - 20)); [ $pos -lt 0 ] && pos=0
+amp "vol $pos"
+while [ $pos -lt $target ]; do
+    sleep 3
+    [ "$(state 5)" = 1 ] || exit 0              # выключили вручную — не мешать
+    pos=$((pos + 1))
+    amp "vol $pos"
+done
+exit 0

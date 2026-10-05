@@ -94,6 +94,7 @@ rsync -ac --delete-before \
     --filter='protect /etc/usb_to_i2s.state' \
     --filter='protect /etc/init.d/S95*' \
     --filter='protect /etc/shadow' \
+    --filter='protect /etc/digifox/' \
     --filter='protect /etc/resolv.conf' \
     --filter='protect /etc/dropbear/dropbear_*_host_key' \
     --filter='protect /data/ethaddr.txt' \

@@ -78,7 +78,14 @@
 
 
 /*********SERIAL_DEBUG_CONSOLE******/
+/* DigiFox: UART2 (pins 1/2) is the link to the DigiD D1 amplifier MCU.
+ * A plain 8250 UART (ttyS2) instead of the FIQ debugger console, so the
+ * line can switch to 8E1 for the STM32 system bootloader (amp firmware update). */
 &fiq_debugger {
+	status = "disabled";
+};
+
+&uart2 {
 	status = "okay";
 };
 

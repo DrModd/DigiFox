@@ -12,7 +12,7 @@
     var T = RU ? {
         source: 'ИСТОЧНИК', amp: 'УСИЛИТЕЛЬ DIGID D1', volume: 'ГРОМКОСТЬ УСИЛИТЕЛЯ', mode: 'РЕЖИМ',
         players: 'ПЛЕЕРЫ', net: 'СЕТЬ', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
-        m_i2s: 'Настройки I2S', m_update: 'Обновление прошивки', m_reboot: 'Перезагрузить Фокс',
+        m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки I2S', m_update: 'Обновление прошивки', m_reboot: 'Перезагрузить Фокс',
         m_classic: 'Классический интерфейс PureFox',
         noPlayer: 'Нет плеера', on: 'Включён', standby: 'Дежурный режим',
         noLink: 'Нет связи с Фоксом', ampNone: 'Усилитель не на связи (UART) — громкость регулируется только им',
@@ -31,7 +31,7 @@
     } : {
         source: 'SOURCE', amp: 'DIGID D1 AMPLIFIER', volume: 'AMPLIFIER VOLUME', mode: 'MODE',
         players: 'PLAYERS', net: 'NETWORK', power: 'POWER', cancel: 'CANCEL', close: 'Close',
-        m_i2s: 'I2S settings', m_update: 'Firmware update', m_reboot: 'Reboot the Fox',
+        m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'I2S settings', m_update: 'Firmware update', m_reboot: 'Reboot the Fox',
         m_classic: 'Classic PureFox interface',
         noPlayer: 'No player', on: 'On', standby: 'Standby',
         noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected (UART) — volume is set only by the amplifier',

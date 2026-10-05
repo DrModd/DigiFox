@@ -1,11 +1,14 @@
 #!/bin/sh
 #
-# pfctl — управление DigiFox (PureFox) с внешнего МК (STM32) через консольный UART
+# pfctl — управление DigiFox (PureFox) с внешнего МК (STM32) через UART2 (ttyS2)
 #
 # Два режима:
 #   1) разовые команды из шелла:     pfctl src qobuz
-#   2) сервер на консоли (без шелла): в /etc/inittab
-#        ttyFIQ0::respawn:/usr/bin/pfctl serve
+#   2) сервер на UART (без шелла): в /etc/inittab
+#        ttyS2::respawn:/usr/bin/pfctl serve
+#      UART2 — обычный порт 8250 (не FIQ-консоль), 115200 8N1; на время
+#      обновления прошивки усилителя (digifox-ampflash) порт занимает stm32flash
+#      (8E1), а pfctl serve ждёт, пока есть /tmp/amp_flash.lock
 #      читает команды построчно, отвечает строками, начинающимися с '@'
 #
 # Все ответы — одна строка, начинается с '@' (так МК отличит их от
@@ -33,11 +36,20 @@
 #   avol <pos> <max> <mute> <db> <power>
 #                     от усилителя (STM32): его состояние. Сохраняется
 #                     в /tmp/amp_state для приложения (amp.php). Ответа нет.
+#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode>
+#                     от усилителя: настройки -> /tmp/amp_cfg. Ответа нет.
+#   aver <версия>     от усилителя: версия прошивки -> /tmp/amp_ver. Ответа нет.
 #
 # Запросы приложения к усилителю (amp.php кладёт их в /tmp/amp_req):
 #   "vol <pos>" -> в UART уходит  @AVOL <pos>
 #   "mute"      -> в UART уходит  @AMUTE
 #   "power"     -> в UART уходит  @APOWER
+#   "pwr on|off"-> @APWR on|off    (будильник, таймер сна)
+#   "set K V"   -> @ASET K V       (настройки усилителя)
+#   "dfu"       -> @DFU            (обновление прошивки, digifox-ampflash)
+#
+# Раз в минуту (и при запуске): @TIME HH:MM — часы в дежурном режиме усилителя.
+# Там же — таймер сна (/tmp/sleep_at) и будильник (/etc/digifox/alarm.conf).
 #
 # Сам (без запроса) в режиме serve сообщает:
 #   @RATE ...          смена потока
@@ -48,6 +60,7 @@
 #                      ASCII + кириллица А..Яа..я = 0x80..0xBF
 
 URL=http://127.0.0.1
+TZ=$(cat /etc/digifox/tz 2>/dev/null); export TZ=${TZ:-MSK-3}
 WGET="wget -q -T 60 -O -"
 PLAYERS=" naa raat mpd aprenderer aplayer apscream shairport lms spotify qobuz "
 
@@ -114,6 +127,9 @@ do_cmd() {
         avol) # громкость усилителя от STM32 — молча сохранить для приложения
             echo "$2 $3 $4 $5 ${6:-1} $(date +%s)" > /tmp/amp_state.tmp && mv /tmp/amp_state.tmp /tmp/amp_state
             ;;
+        acfg) # настройки усилителя от STM32
+            echo "$2 $3 $4 $5 $6 $7" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
+        aver) echo "$2" > /tmp/amp_ver ;;
         rate) echo "@RATE $(rate_now)" ;;
         track) echo "@TRACK $(track_line)" ;;
         "")   ;;
@@ -123,8 +139,12 @@ do_cmd() {
 
 # --- сервер на консоли ----------------------------------------------------
 serve() {
-    stty -echo 2>/dev/null          # не возвращать эхо в МК
-    dmesg -n 1 2>/dev/null          # убрать сообщения ядра с консоли
+    # идёт прошивка усилителя: порт занят stm32flash — ждать, ничего не читая
+    while [ -e /tmp/amp_flash.lock ]; do sleep 1; done
+    # 115200 8N1, без эха (после stm32flash порт мог остаться в 8E1)
+    stty 115200 cs8 -parenb -cstopb -crtscts -ixon -ixoff -echo -icrnl icanon 2>/dev/null
+    dmesg -n 1 2>/dev/null          # убрать сообщения ядра (если консоль на этом порту)
+    me=$$
     # метаданные AirPlay (если установлен pfmeta; второй экземпляр сам не запустится)
     [ -x /usr/bin/pfmeta ] && /usr/bin/pfmeta airplay </dev/null >/dev/null 2>&1 &
     # фоновый наблюдатель: смена потока и запросы приложения к усилителю
@@ -133,8 +153,14 @@ serve() {
         # DigiFox: pfrate reports a new stream within ~20 ms (C, no forks);
         # without it fall back to the shell poll below (~0.5 s)
         PFRATE=""; [ -x /usr/bin/pfrate ] && PFRATE=1
-        rpid=""
+        rpid=""; last_t=""; alarm_day=""
+        trap '[ -n "$rpid" ] && kill "$rpid" 2>/dev/null; exit 0' TERM INT
         while true; do
+            # основной процесс завершён (respawn, прошивка усилителя) — уйти вместе с ним
+            if ! kill -0 "$me" 2>/dev/null; then
+                [ -n "$rpid" ] && kill "$rpid" 2>/dev/null
+                exit 0
+            fi
             if [ -n "$PFRATE" ] && { [ -z "$rpid" ] || ! kill -0 "$rpid" 2>/dev/null; }; then
                 /usr/bin/pfrate & rpid=$!
             fi
@@ -144,6 +170,9 @@ serve() {
                     vol\ *) echo "@AVOL ${req#vol }" ;;
                     mute)   echo "@AMUTE" ;;
                     power)  echo "@APOWER" ;;
+                    pwr\ on|pwr\ off) echo "@APWR ${req#pwr }" ;;
+                    set\ *) echo "@ASET ${req#set }" ;;
+                    dfu)    echo "@DFU" ;;
                 esac
             fi
             n=$((n + 1))
@@ -156,6 +185,24 @@ serve() {
                 m=$((m + 1))
                 if [ $m -ge 2 ]; then      # плеер и режим USB — раз в ~1 с
                     m=0
+                    # время: часы усилителя, таймер сна, будильник
+                    set -- $(date '+%H:%M %s %u %Y %j')
+                    if [ "${4:-0}" -ge 2025 ]; then          # время уже синхронизировано (NTP)
+                        if [ "$1" != "$last_t" ]; then
+                            last_t=$1
+                            echo "@TIME $1"
+                            if [ -f /etc/digifox/alarm.conf ] && [ "$alarm_day" != "$5" ]; then
+                                ( . /etc/digifox/alarm.conf
+                                  [ "$ALARM_ON" = 1 ] && [ "$ALARM_TIME" = "$1" ] &&
+                                  case "${ALARM_DAYS:-1234567}" in *"$3"*) true ;; *) false ;; esac
+                                ) && { alarm_day=$5; /usr/bin/digifox-alarm </dev/null >/dev/null 2>&1 & }
+                            fi
+                        fi
+                        if [ -f /tmp/sleep_at ] && [ "$2" -ge "$(cat /tmp/sleep_at 2>/dev/null || echo 0)" ]; then
+                            rm -f /tmp/sleep_at
+                            echo "@APWR off"
+                        fi
+                    fi
                     svc=$(sed -n 's/.*"active_service":"\([^"]*\)".*/\1/p' /tmp/system_status.json 2>/dev/null)
                     if [ -n "$svc" ] && [ "$svc" != "$last_svc" ]; then
                         echo "@SRC $svc"
