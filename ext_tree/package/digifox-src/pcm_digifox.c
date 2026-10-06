@@ -49,17 +49,17 @@
  * re-read by the pump thread, so a change is heard within a second */
 #define FILTER_FILE "/etc/digifox/srcfilter"
 /* loudness compensation (web page I2S): "on" / "off", optional "ref=N" —
- * no correction in the top N dB of the volume range (default 10) */
+ * no correction in the top N dB of the volume range (default 20) */
 #define LOUD_FILE   "/etc/digifox/loudness"
 /* amplifier volume, written by pfctl: "pos max mute db power time";
  * one step is 1 dB, attenuation = max - pos */
 #define AMP_STATE   "/tmp/amp_state"
-#define LOUD_BASS_F   100.0         /* low shelf, Hz                         */
+#define LOUD_BASS_F    80.0         /* low shelf, Hz: below the mid-bass "boom" */
 #define LOUD_TREB_F 10000.0         /* high shelf, Hz                        */
-#define LOUD_BASS_K   0.35          /* dB of bass per dB below the reference */
-#define LOUD_TREB_K   0.10
-#define LOUD_BASS_MAX 15.0
-#define LOUD_TREB_MAX  5.0
+#define LOUD_BASS_K   0.20          /* dB of bass per dB below the reference */
+#define LOUD_TREB_K   0.00          /* treble left alone: it made things harsh */
+#define LOUD_BASS_MAX  8.0
+#define LOUD_TREB_MAX  0.0
 #define LOUD_STEP     0.2           /* dB per chunk while gliding (~40 dB/s) */
 
 enum { M_NONE, M_PASS, M_PCM, M_DSD };
@@ -331,7 +331,7 @@ static void loud_update(dfx_t *d)
     time_t m = stat(LOUD_FILE, &st) == 0 ? (st.st_mtime ? st.st_mtime : 1) : 0;
     if (m != d->ld_mtime) {
         d->ld_mtime = m;
-        d->ld_on = 0; d->ld_ref = 10;
+        d->ld_on = 0; d->ld_ref = 20;
         FILE *f = m ? fopen(LOUD_FILE, "r") : NULL;
         if (f) {
             char l[64];
