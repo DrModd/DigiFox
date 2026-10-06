@@ -1,9 +1,13 @@
 <?php
 // track.php — текущий трек для приложения Fox Remote и усилителя DigiD D1.
-//   GET          -> {"source":"qobuz","artist":"...","title":"...","album":"..."} ({} — нет данных)
+//   GET          -> {"source":"qobuz","artist":"...","title":"...","album":"...",
+//                    "cover":"https://..."|"", "dur":245000, "pos":61000, "play":true} ({} — нет данных)
+//                   dur/pos — мс; dur 0 — длительность неизвестна (радио)
+//   GET ?prog=1  -> для усилителя: "позиция_с длительность_с 1|0" (пусто — нет трека)
 //   GET ?amp=1   -> одна строка для экрана усилителя: "исполнитель\tназвание" в однобайтовой
 //                   кодировке шрифта усилителя (ASCII + кириллица 0x80..0xBF), пусто — нет трека
-// Источники: /tmp/nowplaying (пишет pfmeta для Qobuz, Spotify, AirPlay) и MPD (запрос здесь).
+// Источники: /tmp/nowplaying и /tmp/np_prog (пишет pfmeta для Qobuz, Spotify, AirPlay) и MPD
+// (запрос здесь). Обложки и длительности, которых плеер не дал, ищутся в iTunes (pfmeta art).
 // Положить на Фокс в /var/www/track.php.
 
 $np_file = '/tmp/nowplaying';
@@ -27,11 +31,15 @@ function mpd_track() {
         if ($p !== false && !isset($kv[substr($l, 0, $p)])) $kv[substr($l, 0, $p)] = substr($l, $p + 2);
     }
     fclose($s);
-    if (($kv['state'] ?? '') !== 'play') return null;
+    $state = $kv['state'] ?? '';
+    if ($state !== 'play' && $state !== 'pause') return null;
     $title  = $kv['Title'] ?? '';
     $artist = $kv['Artist'] ?? ($kv['Name'] ?? '');     // радио: Name — станция, Title — что играет
     if ($title === '' && isset($kv['file'])) $title = preg_replace('/\.[^.\/]*$/', '', basename($kv['file']));
-    return ['source' => 'mpd', 'artist' => $artist, 'title' => $title, 'album' => $kv['Album'] ?? ''];
+    $dur = (int)round(1000 * (float)($kv['duration'] ?? ($kv['Time'] ?? 0)));
+    return ['source' => 'mpd', 'artist' => $artist, 'title' => $title, 'album' => $kv['Album'] ?? '',
+            'cover' => '', 'dur' => $dur, 'pos' => (int)round(1000 * (float)($kv['elapsed'] ?? 0)),
+            'play' => $state === 'play', 'radio' => $dur === 0];
 }
 
 function current_track($np_file) {
@@ -40,7 +48,17 @@ function current_track($np_file) {
     $l = @file($np_file, FILE_IGNORE_NEW_LINES);
     if (!$l || count($l) < 3) return null;
     if ($svc !== '' && $l[0] !== $svc) return null;    // устаревшее: плеер уже другой
-    return ['source' => $l[0], 'artist' => $l[1], 'title' => $l[2], 'album' => $l[3] ?? ''];
+    $t = ['source' => $l[0], 'artist' => $l[1], 'title' => $l[2], 'album' => $l[3] ?? '',
+          'cover' => $l[4] ?? '', 'dur' => (int)($l[5] ?? 0), 'pos' => 0, 'play' => true, 'radio' => false];
+    // позиция: "мс время_с play|pause" — где трек был в момент time; старше трека — не считается
+    $p = preg_split('/\s+/', trim((string)@file_get_contents('/tmp/np_prog')));
+    if (count($p) >= 3 && @filemtime('/tmp/np_prog') >= @filemtime($np_file) - 1) {
+        $t['play'] = $p[2] === 'play';
+        $t['pos'] = max(0, (int)$p[0] + ($t['play'] ? (time() - (int)$p[1]) * 1000 : 0));
+    } else {
+        $t['pos'] = max(0, (time() - (int)@filemtime($np_file)) * 1000);
+    }
+    return $t;
 }
 
 // UTF-8 -> кодировка шрифта усилителя
@@ -74,7 +92,38 @@ function amp_encode($s, $max) {
     return trim(substr($out, 0, $max));
 }
 
+// обложка и длительность, которых плеер не дал: iTunes по исполнителю и названию (в фоне,
+// результат — в /tmp/np_art: ключ, обложка, мс; запрос — /tmp/np_art.req)
+function fill_art(&$t) {
+    if (!$t || $t['title'] === '' || ($t['cover'] !== '' && ($t['dur'] > 0 || $t['radio']))) return;
+    $key = md5($t['artist'] . "\n" . $t['title']);
+    $a = @file('/tmp/np_art', FILE_IGNORE_NEW_LINES);
+    if ($a && $a[0] === $key) {
+        if ($t['cover'] === '' && ($a[1] ?? '') !== '') $t['cover'] = $a[1];
+        // длительность из поиска — только когда плеер её не знает (Qobuz); у радио её нет
+        if ($t['dur'] <= 0 && !$t['radio'] && (int)($a[2] ?? 0) > 0) $t['dur'] = (int)$a[2];
+        return;
+    }
+    if (trim((string)@file_get_contents('/tmp/np_art.req')) === $key) return;   // уже ищется
+    @file_put_contents('/tmp/np_art.req', $key);
+    $term = trim($t['artist'] . ' ' . $t['title']);
+    $url = 'https://itunes.apple.com/search?media=music&entity=song&limit=1&term=' . rawurlencode($term);
+    exec('/usr/bin/pfmeta art ' . escapeshellarg($key) . ' ' . escapeshellarg($url) . ' >/dev/null 2>&1 &');
+}
+
 $t = current_track($np_file);
+if ($t) {
+    fill_art($t);
+    if ($t['dur'] > 0 && $t['pos'] > $t['dur']) $t['pos'] = $t['dur'];
+}
+
+if (isset($_GET['prog'])) {
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: no-store');
+    if ($t && $t['title'] !== '' && $t['dur'] > 0)
+        echo intdiv($t['pos'], 1000) . ' ' . intdiv($t['dur'], 1000) . ' ' . ($t['play'] ? 1 : 0);
+    exit;
+}
 
 if (isset($_GET['amp'])) {
     header('Content-Type: text/plain; charset=x-user-defined');

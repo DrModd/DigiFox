@@ -58,6 +58,8 @@
 #   @SRC <id>          сменился плеер (с веб-страницы, из приложения, с усилителя)
 #   @USB on|off        включён/выключен USBtoI2S
 #   @TRACK ...         сменился трек (Qobuz, Spotify, AirPlay, MPD — см. pfmeta, track.php).
+#   @PROG <поз> <длит> <1|0>  позиция и длительность трека, с; 1 — играет (усилитель
+#                      досчитывает сам; раз в ~5 с и при смене трека). "@PROG" — нет данных.
 #                      Текст в однобайтовой кодировке шрифта усилителя:
 #                      ASCII + кириллица А..Яа..я = 0x80..0xBF
 
@@ -68,6 +70,7 @@ PLAYERS=" naa raat mpd aprenderer aplayer apscream shairport lms spotify qobuz "
 
 oneline() { tr -d '\r\n'; }
 track_line() { wget -q -T 3 -O - "$URL/track.php?amp=1" 2>/dev/null | tr -d '\r\n'; }
+prog_line()  { wget -q -T 3 -O - "$URL/track.php?prog=1" 2>/dev/null | tr -d '\r\n'; }
 post()    { $WGET --post-data="$2" "$URL/$1" 2>/dev/null | oneline; }
 get()     { $WGET "$URL/$1" 2>/dev/null | oneline; }
 ok()      { echo "@OK $*"; }
@@ -156,7 +159,7 @@ serve() {
     [ -x /usr/bin/pfmeta ] && /usr/bin/pfmeta airplay </dev/null >/dev/null 2>&1 &
     # фоновый наблюдатель: смена потока и запросы приложения к усилителю
     (
-        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""
+        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""; j=0; last_pg="-"
         # DigiFox: pfrate reports a new stream within ~20 ms (C, no forks);
         # without it fall back to the shell poll below (~0.5 s)
         PFRATE=""; [ -x /usr/bin/pfrate ] && PFRATE=1
@@ -223,7 +226,14 @@ serve() {
                     if [ "$np" != "$last_np" ] || { [ "$svc" = mpd ] && [ $k -ge 2 ]; } || [ $k -ge 10 ]; then
                         k=0; last_np=$np
                         tr_=$(track_line)
-                        [ "$tr_" != "$last_tr" ] && echo "@TRACK $tr_" && last_tr=$tr_
+                        [ "$tr_" != "$last_tr" ] && echo "@TRACK $tr_" && last_tr=$tr_ && j=99
+                    fi
+                    # позиция трека: раз в ~5 с (усилитель досчитывает сам) и сразу после смены
+                    j=$((j + 1))
+                    if [ $j -ge 5 ] && { [ -n "$last_tr" ] || [ "$last_pg" != "" ]; }; then
+                        j=0
+                        pg=$(prog_line)
+                        if [ -n "$pg" ] || [ "$last_pg" != "" ]; then echo "@PROG $pg"; last_pg=$pg; fi
                     fi
                 fi
             fi

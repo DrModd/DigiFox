@@ -28,8 +28,15 @@
         <div class="cap" data-t="source">ИСТОЧНИК</div>
         <div class="source" id="source">—</div>
         <div class="track" id="track" hidden>
-            <div class="title" id="t-title"></div>
-            <div class="artist" id="t-artist"></div>
+            <img class="cover" id="t-cover" alt="" hidden>
+            <div class="grow">
+                <div class="title" id="t-title"></div>
+                <div class="artist" id="t-artist"></div>
+            </div>
+        </div>
+        <div class="prog" id="prog" hidden>
+            <div class="bar"><i id="prog-fill"></i></div>
+            <div class="times"><span id="prog-pos"></span><span id="prog-dur"></span></div>
         </div>
         <div class="rate-row">
             <span class="rate" id="rate">&nbsp;</span>

@@ -133,6 +133,7 @@
             S.rate = formatRate(r[3]);
             var t = r[4];
             S.track = t && (t.title || t.artist) && !S.usb && S.rate !== T.stopped ? t : null;
+            if (S.track) S.track.at = Date.now();       // pos — на этот момент, дальше досчитываем
         }).catch(function () {
             S.connected = false;
             S.error = T.noLink;
@@ -149,6 +150,25 @@
             pollTimer = setTimeout(loop, 2000);
         }, ms);
     }
+
+    // ---------------- track position ----------------
+    function mmss(ms) {
+        var s = Math.floor(ms / 1000), m = Math.floor(s / 60);
+        s %= 60;
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function renderProg() {
+        var t = S.track, p = $('prog');
+        p.hidden = !(t && t.dur > 0);
+        if (p.hidden) return;
+        var pos = t.pos + (t.play ? Date.now() - t.at : 0);
+        if (pos > t.dur) pos = t.dur;
+        $('prog-fill').style.width = (100 * pos / t.dur).toFixed(2) + '%';
+        setText('prog-pos', mmss(pos));
+        setText('prog-dur', mmss(t.dur));
+    }
+    setInterval(function () { if (document.visibilityState !== 'hidden') renderProg(); }, 1000);
 
     // ---------------- render ----------------
     function setText(id, txt) { var e = $(id); if (e.textContent !== txt) e.textContent = txt; }
@@ -168,6 +188,13 @@
             setText('t-title', S.track.title || '');
             setText('t-artist', [S.track.artist, S.track.album].filter(Boolean).join('  ·  '));
         }
+        var cv = $('t-cover'), url = S.track && S.track.cover || '';
+        if (cv.getAttribute('src') !== url) {
+            cv.hidden = true;
+            if (url) { cv.onload = function () { cv.hidden = false; }; cv.onerror = function () { cv.hidden = true; }; cv.src = url; }
+            else cv.removeAttribute('src');
+        }
+        renderProg();
         setText('rate', S.rate || ' ');
         setText('mode-cap', S.usb === true ? 'USB' : S.usb === false ? T.net : '');
 

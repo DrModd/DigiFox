@@ -1,19 +1,29 @@
 #!/bin/sh
 #
 # pfmeta — название текущего трека для усилителя DigiD D1 и приложения Fox Remote.
-# Пишет /tmp/nowplaying (UTF-8), 4 строки: плеер, исполнитель, название, альбом.
-# Дальше его читает track.php (а pfctl serve отправляет в UART: @TRACK ...).
+# Пишет /tmp/nowplaying (UTF-8): плеер, исполнитель, название, альбом,
+# обложка (URL, может быть пусто), длительность, мс (0 — неизвестна).
+# И /tmp/np_prog: "позиция_мс время_с play|pause" — где трек был в момент time.
+# Дальше их читает track.php (а pfctl serve отправляет в UART: @TRACK, @PROG).
 #
 #   pfmeta qobuz      читает вывод qobuz-connect со stdin (S95qobuz: "... 2>&1 | pfmeta qobuz")
 #   pfmeta spotify    вызывается librespot --onevent (переменные PLAYER_EVENT, NAME, ARTISTS, ALBUM)
 #   pfmeta airplay    фоновый разбор канала метаданных shairport-sync (запускает pfctl serve)
+#   pfmeta art <ключ> <url>   поиск обложки и длительности (iTunes) -> /tmp/np_art
 #   pfmeta clear      стереть
 
 NP=/tmp/nowplaying
 PIPE=/tmp/shairport-sync-metadata
 
-put() {   # put <плеер> <исполнитель> <название> <альбом>
-    printf '%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" > $NP.tmp.$$ && mv $NP.tmp.$$ $NP
+PROG=/tmp/np_prog
+
+put() {   # put <плеер> <исполнитель> <название> <альбом> [обложка] [длительность_мс]
+    prog 0 play
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" "$5" "${6:-0}" > $NP.tmp.$$ && mv $NP.tmp.$$ $NP
+}
+
+prog() {  # prog <позиция_мс> play|pause
+    echo "$1 $(date +%s) $2" > $PROG.tmp.$$ && mv $PROG.tmp.$$ $PROG
 }
 
 case "$1" in
@@ -33,28 +43,58 @@ qobuz)
     # через QOBUZ_TAIL секунд после "finished" текущего.
     LOG=/tmp/qobuz-meta.log; : > $LOG; nlog=0
     TAIL=${QOBUZ_TAIL:-6}
-    cur=""; pend=""; pa=""; pt=""; pal=""
+    cur=""; pend=""; pa=""; pt=""; pal=""; pimg=""; al=""
     sid=""; t=""; a=""; inmeta=0; seen_disp=0; tpid=""; fin=""
+    # позиция играющего трека: ppos мс на момент pts (с), pst play|pause
+    ppos=0; pts=$(date +%s); pst=play; nid=""; nstart=0
     untimer() { [ -n "$tpid" ] && kill $tpid 2>/dev/null; tpid=""; }
-    show() { untimer; put qobuz "$pa" "$pt" "$pal"; cur=$pend; pend=""; }
+    now_pos() { if [ $pst = play ]; then echo $((ppos + ($(date +%s) - pts) * 1000)); else echo $ppos; fi; }
+    setpos() { ppos=$1; pts=$(date +%s); pst=$2; prog $ppos $pst; }
+    show() {
+        untimer; put qobuz "$pa" "$pt" "$pal" "$pimg"; cur=$pend; pend=""
+        if [ "$cur" = "$nid" ]; then setpos $nstart play; else setpos 0 play; fi
+    }
+    # метаданные собраны (после "Album art URL", у старых версий — после "Album")
+    meta_done() {
+        inmeta=0; untimer
+        pend=$sid; pa=$a; pt=$t; pal=$al; pimg=$img
+        # нечего ждать: ничего не играет или это тот же поток
+        if [ -z "$cur" ] || [ "$cur" = "$sid" ]; then show; else arm; fi
+    }
     # запасной вариант: текущий выдал все данные, следующий известен, а
     # сообщений "disposed" эта версия qobuz-connect не пишет
     arm() {
         if [ -n "$pend" ] && [ "$fin" = "$cur" ] && [ $seen_disp = 0 ]; then
             untimer
-            ( sleep $TAIL; put qobuz "$pa" "$pt" "$pal" ) &
+            ( sleep $TAIL; put qobuz "$pa" "$pt" "$pal" "$pimg" ) &
             tpid=$!; cur=$pend; pend=""
+            ppos=$(( -TAIL * 1000 )); pts=$(date +%s); pst=play
         fi
     }
     while IFS= read -r l; do
+        # старая версия без "Album art URL": метаданные кончились на "Album"
+        [ $inmeta = 2 ] && case "$l" in *"Album art URL: "*) ;; *) img=""; meta_done ;; esac
         case "$l" in
+            *"Playback state changed: "*)
+                echo "$(date +%T) $l" >> $LOG
+                case "$l" in
+                    *[Pp]aus*|*PAUS*|*[Ss]top*|*STOP*) [ $pst = play ] && setpos $(now_pos) pause ;;
+                    *[Pp]lay*|*PLAY*) [ $pst = pause ] && setpos $ppos play ;;
+                esac ;;
             *"[Stream "*)
                 id=${l#*\[Stream }; id=${id%%\]*}
                 # короткий журнал для диагностики: /tmp/qobuz-meta.log
                 nlog=$((nlog + 1)); [ $nlog -gt 300 ] && { : > $LOG; nlog=0; }
                 echo "$(date +%T) $l" >> $LOG
                 case "$l" in
-                    *"metadata became available"*) sid=$id; t=""; a=""; inmeta=1 ;;
+                    *"metadata became available"*) sid=$id; t=""; a=""; al=""; img=""; inmeta=1 ;;
+                    *"New audio stream (starting from "*)
+                        n=${l#*starting from }; n=${n%%ms*}
+                        nid=$id; nstart=${n:-0}
+                        [ "$id" = "$cur" ] && setpos $nstart play ;;
+                    *"stream seeked: "*)
+                        n=${l#*seeked: }; n=${n%%ms*}
+                        [ "$id" = "$cur" ] && setpos ${n:-0} $pst ;;
                     *"disposed of"*)
                         seen_disp=1
                         if [ "$id" = "$cur" ]; then
@@ -65,12 +105,14 @@ qobuz)
                 esac ;;
             *"Title: "*)  [ $inmeta = 1 ] && t=${l#*Title: } ;;
             *"Artist: "*) [ $inmeta = 1 ] && a=${l#*Artist: } ;;
+            *"Album art URL: "*)
+                [ $inmeta = 2 ] || continue
+                img=${l#*Album art URL: }
+                case "$img" in http*) ;; *) img="" ;; esac
+                meta_done ;;
             *"Album: "*)
                 [ $inmeta = 1 ] || continue
-                inmeta=0; untimer
-                pend=$sid; pa=$a; pt=$t; pal=${l#*Album: }
-                # нечего ждать: ничего не играет или это тот же поток
-                if [ -z "$cur" ] || [ "$cur" = "$sid" ]; then show; else arm; fi ;;
+                al=${l#*Album: }; inmeta=2 ;;
         esac
     done
     ;;
@@ -80,7 +122,15 @@ spotify)
         track_changed)
             a=$(printf '%s' "$ARTISTS" | head -1)       # несколько исполнителей — через \n
             [ -z "$a" ] && a=$SHOW_NAME                 # подкаст
-            put spotify "$a" "$NAME" "$ALBUM" ;;
+            # обложки — через \n, от маленькой к большой: берём последнюю
+            c=$(printf '%s\n' "$COVERS" | grep '^http' | tail -1)
+            put spotify "$a" "$NAME" "$ALBUM" "$c" "${DURATION_MS:-0}" ;;
+        playing|started|seeked|position_correction)
+            [ -n "$POSITION_MS" ] && prog "$POSITION_MS" play ;;
+        paused)
+            [ -n "$POSITION_MS" ] && prog "$POSITION_MS" pause ;;
+        stopped)
+            [ -f $PROG ] && set -- $(cat $PROG) && [ "$3" = play ] && prog $(( $1 + ($(date +%s) - $2) * 1000 )) pause ;;
     esac
     ;;
 
@@ -95,17 +145,31 @@ airplay)
             # SGVsbG8gd29ybGQ=</data></item>
             # asar 61736172 исполнитель, minm 6d696e6d название, asal 6173616c альбом,
             # mden 6d64656e конец блока метаданных
-            awk -v np=$NP '
+            # prgr 70726772 "начало/текущий/конец" (RTP, 44100 в секунду) — позиция и длительность,
+            # pfls 70666c73 пауза, prsm 7072736d продолжение
+            awk -v np=$NP -v pg=$PROG '
+            function now(  t) { "date +%s" | getline t; close("date +%s"); return t + 0 }
             function save(  tmp) {
                 tmp = np ".tmp.air"
-                printf "shairport\n%s\n%s\n%s\n", v["61736172"], v["6d696e6d"], v["6173616c"] > tmp
+                printf "shairport\n%s\n%s\n%s\n\n%d\n", v["61736172"], v["6d696e6d"], v["6173616c"], dur > tmp
                 close(tmp); system("mv " tmp " " np)
+            }
+            function prog(p, st,  tmp) {
+                ppos = p; pts = now(); pst = st
+                tmp = pg ".tmp.air"
+                printf "%d %d %s\n", p, pts, st > tmp
+                close(tmp); system("mv " tmp " " pg)
             }
             /<code>/ {
                 c = $0; sub(/.*<code>/, "", c); sub(/<\/code>.*/, "", c)
                 n = $0; sub(/.*<length>/, "", n); sub(/<\/length>.*/, "", n)
                 code = c; want = (n + 0 > 0)
-                if (!want) { if (code == "6d64656e") save(); else if (code in keep) v[code] = "" }
+                if (!want) {
+                    if (code == "6d64656e") save()
+                    else if (code == "70666c73" && pst == "play") prog(ppos + (now() - pts) * 1000, "pause")
+                    else if (code == "7072736d" && pst == "pause") prog(ppos, "play")
+                    else if (code in keep) v[code] = ""
+                }
                 next
             }
             want {
@@ -115,16 +179,34 @@ airplay)
                 if (!(code in keep)) next
                 cmd = "echo \"" d "\" | base64 -d 2>/dev/null"; s = ""
                 while ((cmd | getline l) > 0) s = (s == "" ? l : s " " l)
-                close(cmd); v[code] = s
+                close(cmd)
+                if (code == "70726772") {
+                    split(s, r, "/")
+                    if (r[3] + 0 > r[1] + 0) {
+                        d = int((r[3] - r[1]) * 1000 / 44100)
+                        if (d != dur) { dur = d; save() }
+                        prog(int((r[2] - r[1]) * 1000 / 44100), "play")
+                    }
+                } else v[code] = s
             }
-            BEGIN { keep["61736172"]; keep["6d696e6d"]; keep["6173616c"] }
+            BEGIN { keep["61736172"]; keep["6d696e6d"]; keep["6173616c"]; keep["70726772"]; pst = "pause" }
             ' < $PIPE
         fi
         sleep 2
     done
     ;;
 
-clear) rm -f $NP ;;
+art)
+    # pfmeta art <ключ> <url поиска iTunes>: обложка 600x600 и длительность первого
+    # найденного трека -> /tmp/np_art (ключ, обложка, мс). Без ответа — пустые.
+    ART=/tmp/np_art
+    j=$(wget -q -T 8 -O - "$3" 2>/dev/null | tr -d '\n')
+    c=$(printf '%s' "$j" | sed -n 's/.*"artworkUrl100":"\([^"]*\)".*/\1/p' | sed 's/100x100bb/600x600bb/')
+    d=$(printf '%s' "$j" | sed -n 's/.*"trackTimeMillis":\([0-9]*\).*/\1/p')
+    printf '%s\n%s\n%s\n' "$2" "$c" "${d:-0}" > $ART.tmp.$$ && mv $ART.tmp.$$ $ART
+    ;;
 
-*) echo "usage: pfmeta qobuz|spotify|airplay|clear"; exit 1 ;;
+clear) rm -f $NP $PROG ;;
+
+*) echo "usage: pfmeta qobuz|spotify|airplay|art|clear"; exit 1 ;;
 esac
