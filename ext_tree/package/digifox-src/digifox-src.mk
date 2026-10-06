@@ -18,12 +18,15 @@ define DIGIFOX_SRC_BUILD_CMDS
 	$(TARGET_CC) $(DIGIFOX_SRC_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s \
 		-DPIC -o $(@D)/libasound_module_pcm_digifox.so \
 		$(@D)/pcm_digifox.c $(@D)/dsd2pcm.c -lasound -lsoxr -lm -lpthread
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s \
+		-o $(@D)/raat_card.so $(@D)/raat_card.c -ldl
 endef
 
 define DIGIFOX_SRC_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/digifox-srcbench $(TARGET_DIR)/usr/bin/digifox-srcbench
 	$(INSTALL) -D -m 0755 $(@D)/libasound_module_pcm_digifox.so \
 		$(TARGET_DIR)/usr/lib/alsa-lib/libasound_module_pcm_digifox.so
+	$(INSTALL) -D -m 0644 $(@D)/raat_card.so $(TARGET_DIR)/usr/lib/digifox/raat_card.so
 endef
 
 $(eval $(generic-package))
