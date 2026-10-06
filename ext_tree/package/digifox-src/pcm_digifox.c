@@ -178,6 +178,13 @@ static void free_conv(dfx_t *d)
 static int setup_slave(dfx_t *d)
 {
     if (d->slave_ready) return 0;
+    /* the I2S device is opened here, not in open(): programs that open the
+     * PCM twice (Roon: a "watch" handle and the output) or just probe it must
+     * not find the I2S busy */
+    if (!d->slave) {
+        int e = snd_pcm_open(&d->slave, d->slave_name, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+        if (e < 0) { d->slave = NULL; return e; }
+    }
     snd_pcm_hw_params_t *hp;
     snd_pcm_sw_params_t *sp;
     snd_pcm_hw_params_alloca(&hp);
@@ -705,8 +712,8 @@ static int dfx_prepare(snd_pcm_ioplug_t *io)
     { uint64_t v; if (d->efd >= 0 && read(d->efd, &v, sizeof v) < 0) {} d->ev_set = 0; }
     d->running = 0;
     reset_stream(d);
-    snd_pcm_drop(d->slave);
-    int err = snd_pcm_prepare(d->slave);
+    int err = 0;
+    if (d->slave) { snd_pcm_drop(d->slave); err = snd_pcm_prepare(d->slave); }
     signal_ready(d);                 /* empty ring: the player may write */
     return err;
 }
@@ -723,13 +730,14 @@ static int dfx_stop(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
     d->running = 0;
-    snd_pcm_drop(d->slave);
+    if (d->slave) snd_pcm_drop(d->slave);
     return 0;
 }
 
 static int dfx_pause(snd_pcm_ioplug_t *io, int enable)
 {
     dfx_t *d = io->private_data;
+    if (!d->slave) return 0;
     if (enable) {
         d->running = 0;
         if (snd_pcm_pause(d->slave, 1) < 0) snd_pcm_drop(d->slave);
@@ -792,6 +800,7 @@ static int dfx_drain(snd_pcm_ioplug_t *io)
 {
     dfx_t *d = io->private_data;
     pthread_mutex_lock(&d->lock);
+    if (!d->slave || !d->st) { pthread_mutex_unlock(&d->lock); return 0; }
     if (!d->running) d->running = 1;
     double limit = now_s() + 2.0 + (double)io->buffer_size / io->rate;
     /* everything the player wrote, through the converters, into staging/slave */
@@ -837,7 +846,7 @@ static int dfx_delay(snd_pcm_ioplug_t *io, snd_pcm_sframes_t *delayp)
 {
     dfx_t *d = io->private_data;
     snd_pcm_sframes_t sd = 0;
-    if (snd_pcm_delay(d->slave, &sd) < 0 || sd < 0) sd = 0;
+    if (!d->slave || snd_pcm_delay(d->slave, &sd) < 0 || sd < 0) sd = 0;
     double out = (double)sd + (double)(d->st_len - d->st_pos);
     if (d->sx) out += soxr_delay(d->sx);
     *delayp = (snd_pcm_sframes_t)(d->wpos - d->hw) + (snd_pcm_sframes_t)(out * d->ratio + 0.5);
@@ -853,7 +862,7 @@ static int dfx_poll_revents(snd_pcm_ioplug_t *io, struct pollfd *pfd, unsigned i
     snd_pcm_uframes_t free_ = io->buffer_size - (snd_pcm_uframes_t)(d->wpos - d->played);
     unsigned short ev = free_ >= io->period_size ? POLLOUT : 0;
     /* a slave that is broken for good must not leave the player waiting */
-    snd_pcm_state_t st = snd_pcm_state(d->slave);
+    snd_pcm_state_t st = d->slave ? snd_pcm_state(d->slave) : SND_PCM_STATE_PREPARED;
     if (st == SND_PCM_STATE_DISCONNECTED || st == SND_PCM_STATE_OPEN) ev |= POLLERR;
     *revents = ev;
     return 0;
@@ -896,7 +905,7 @@ static void *pump_thread(void *arg)
         double t = now_s();
         if (t >= next_log) {
             next_log = t + 0.2;
-            if (access("/tmp/digifox_debug", F_OK) == 0) {
+            if (d->slave && access("/tmp/digifox_debug", F_OK) == 0) {
                 FILE *f = fopen("/tmp/digifox_src.log", "a");
                 if (f) {
                     snd_pcm_sframes_t sd = -1;
@@ -930,7 +939,7 @@ static void *pump_thread(void *arg)
             pump(d);
             /* data waiting for room in the I2S buffer: also wake on the slave */
             int waiting = d->wpos != d->hw || d->st_len - d->st_pos >= d->s_period;
-            if (waiting && snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING)
+            if (waiting && d->slave && snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING)
                 nf = snd_pcm_poll_descriptors(d->slave, pfd, 7);
             if (nf < 0) nf = 0;
         }
@@ -1046,12 +1055,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     if (!d) return -ENOMEM;
     d->slave_name = strdup(slave);
     d->quality = !strcmp(quality, "hq") ? Q_HQ : !strcmp(quality, "vhq") ? Q_VHQ : Q_AUTO;
-    err = snd_pcm_open(&d->slave, slave, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
-    if (err < 0) {
-        SNDERR("digifox: cannot open %s: %s", slave, snd_strerror(err));
-        free(d->slave_name); free(d);
-        return err;
-    }
+    d->slave = NULL;                 /* opened on the first hw_params (setup_slave) */
 
     d->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     d->kfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
