@@ -211,8 +211,15 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
     } else {
         period_size = PERIOD_FRAMES;
         if (stream == SND_PCM_STREAM_CAPTURE) {
+            /* DigiFox: 512 at every rate. The gadget's feedback PI keeps the
+             * capture fill at buffer/128 = 512 frames. Reading 512-frame
+             * chunks back-to-back averages ~256, below that target, so the
+             * PI asks the host for more until the I2S buffer is full and
+             * pushes back — the loop then follows the I2S clock. With 1024
+             * (used above 192 kHz) the average sat right on the target, the
+             * PI saw no error while a slow host drained the I2S buffer:
+             * an underrun every few minutes at 384 kHz (~150 ppm). */
             period_size = 512;
-            if (rate > 192000) period_size = 1024;
         }
         buffer_size = period_size * 16;
         /* Capture: scale buffer to give PI controller ~180ms headroom
@@ -498,8 +505,13 @@ int main(void) {
         /* a line a minute while playing: shows when and in what state it stopped */
         if (play_started && now_t - hb_t >= 60) {
             hb_t = now_t;
-            evlog("playing %u Hz: writes %lu, I2S underruns %lu, USB overruns %lu",
-                  current_rate, write_count, xrun_count, cap_xrun_count);
+            /* feedback pitch (1000000 = nominal): how far the host is pushed */
+            int fb = read_sysfs_int("feedback");
+            snd_pcm_sframes_t pb_delay = 0;
+            if (pcm_playback) snd_pcm_delay(pcm_playback, &pb_delay);
+            evlog("playing %u Hz: writes %lu, I2S underruns %lu, USB overruns %lu, feedback %+d ppm, I2S queue %ld",
+                  current_rate, write_count, xrun_count, cap_xrun_count,
+                  fb > 0 ? fb - 1000000 : 0, (long)pb_delay);
         }
         /* ── Uevent: rate change detection ───────────────────────── */
         ssize_t len = recv(uevent_sock, uevent_buf, sizeof(uevent_buf) - 1, MSG_DONTWAIT);
