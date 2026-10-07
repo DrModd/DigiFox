@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# DigiFox: страховка от зависаний.
+#   - аппаратный сторожевой таймер (/dev/watchdog): если система встала
+#     целиком (ядро, прерывания), Фокс перезагрузится сам примерно через 30 с;
+#   - присмотр за пересылкой USB -> I2S (uac2_router, SCHED_FIFO 70): если она
+#     ест весь процессор 15 с подряд — значит, крутится в цикле и душит сеть и
+#     USB; тогда запись в журнал и перезапуск пересылки.
+# Журнал: /var/lib/digifox/events.log (на флеше, переживает перезагрузку;
+# его же пишут модуль пересчёта и пересылка; виден на странице «Диагностика»).
+
+LOG_DIR=/var/lib/digifox
+LOG=$LOG_DIR/events.log
+PIDFILE=/var/run/digifox-guard.pid
+
+log() {
+    mkdir -p $LOG_DIR
+    echo "$(date '+%d.%m %H:%M:%S') guard: $*" >> $LOG
+    sync
+}
+
+ticks() {   # utime + stime процесса, в тиках (100 в секунду)
+    awk '{ print $14 + $15 }' /proc/$1/stat 2>/dev/null
+}
+
+guard_loop() {
+    hot=0; last_pid=""; last_t=0
+    while true; do
+        sleep 5
+        pid=$(pidof uac2_router | awk '{print $1}')
+        if [ -z "$pid" ]; then hot=0; last_pid=""; continue; fi
+        t=$(ticks $pid)
+        [ -z "$t" ] && continue
+        if [ "$pid" = "$last_pid" ] && [ $((t - last_t)) -ge 470 ]; then   # >= 94 % за 5 с
+            hot=$((hot + 1))
+        else
+            hot=0
+        fi
+        last_pid=$pid; last_t=$t
+        if [ $hot -ge 3 ]; then
+            log "uac2_router ($pid) used all CPU for 15 s (spinning): restarting it"
+            kill -9 $pid 2>/dev/null
+            sleep 1
+            /etc/rc.pure/S95uac2_router start >/dev/null 2>&1
+            hot=0; last_pid=""
+        fi
+    done
+}
+
+start() {
+    log "Fox started (DigiFox $(cat /etc/digifox-release 2>/dev/null))"
+    if [ -c /dev/watchdog ] && ! pidof watchdog >/dev/null; then
+        # кормит каждые 5 с; не кормит 30 с — аппаратный сброс
+        watchdog -T 30 -t 5 /dev/watchdog && log "hardware watchdog on (30 s)"
+    fi
+    if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then return; fi
+    guard_loop </dev/null >/dev/null 2>&1 &
+    echo $! > $PIDFILE
+}
+
+stop() {
+    [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" 2>/dev/null
+    rm -f $PIDFILE
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart|reload) stop; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

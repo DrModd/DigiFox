@@ -29,8 +29,10 @@
 #include <stdarg.h>
 #include <time.h>
 
-/* DigiFox: rare events into the same log as the converter (diag.php) */
-#define EVENT_LOG       "/tmp/digifox_events.log"
+/* DigiFox: rare events into the same log as the converter (diag.php), kept
+ * on the flash so they survive a hang and the reboot after it */
+#define EVENT_DIR       "/var/lib/digifox"
+#define EVENT_LOG       EVENT_DIR "/events.log"
 /* the host sends nothing for this long while the I2S plays: the RV1106 DMA
  * would loop its last buffer (a loud buzz) — stop the I2S, wait for data */
 #define USB_STARVE_MS   250
@@ -38,19 +40,26 @@
 static void evlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void evlog(const char *fmt, ...)
 {
+    /* at most 30 lines a minute: a fault that repeats must not wear the flash */
+    static time_t win; static int n;
+    time_t t = time(NULL);
+    if (t - win >= 60) { win = t; n = 0; }
+    if (++n > 30) return;
     struct stat st;
+    mkdir(EVENT_DIR, 0755);
     if (stat(EVENT_LOG, &st) == 0 && st.st_size > 65536) rename(EVENT_LOG, EVENT_LOG ".old");
     FILE *f = fopen(EVENT_LOG, "a");
     if (!f) return;
-    time_t t = time(NULL);
     struct tm tm;
     localtime_r(&t, &tm);
-    fprintf(f, "%02d.%02d %02d:%02d:%02d usb: ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    fprintf(f, "%02d.%02d %02d:%02d:%02d " "usb: ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec);
     va_list ap;
     va_start(ap, fmt);
     vfprintf(f, fmt, ap);
     va_end(ap);
     fputc('\n', f);
+    fflush(f);
+    fsync(fileno(f));            /* survives a hang and the hard reset after it */
     fclose(f);
 }
 /* time.h not needed — status log uses frame counter instead of time() syscall */
@@ -363,10 +372,27 @@ static int prebuffer_from_capture(char *cap_buf, snd_pcm_uframes_t cap_period,
             memcpy(prebuf + collected * frame_bytes, cap_buf, to_copy * frame_bytes);
             collected += to_copy;
         } else if (frames == -EPIPE) {
+            /* DigiFox: an overrun that repeats at once (host not streaming)
+             * spun here at FIFO 70 and froze the whole Fox — count and pause */
             snd_pcm_prepare(pcm_capture);
             snd_pcm_start(pcm_capture);
-        } else if (frames < 0) {
-            if (++errors >= MAX_CONSECUTIVE_ERRORS) return -1;
+            usleep(1000);
+            if (++errors >= MAX_CONSECUTIVE_ERRORS) {
+                evlog("pre-buffer: USB capture overruns keep repeating, reopening");
+                return -1;
+            }
+        } else if (frames == 0) {
+            usleep(1000);
+            if (++errors >= MAX_CONSECUTIVE_ERRORS * 20) {
+                evlog("pre-buffer: USB capture returns nothing, reopening");
+                return -1;
+            }
+        } else {
+            usleep(1000);
+            if (++errors >= MAX_CONSECUTIVE_ERRORS) {
+                evlog("pre-buffer: USB capture error %s, reopening", snd_strerror((int)frames));
+                return -1;
+            }
         }
     }
     return (int)collected;
@@ -451,7 +477,30 @@ int main(void) {
 
     fflush(stdout);
 
+    evlog("router started (output %s)", i2s_device());
+    time_t hb_t = time(NULL), spin_t = time(NULL);
+    unsigned long spin_n = 0;
+
     while (running) {
+        /* DigiFox: this loop runs at SCHED_FIFO 70, above the network and USB
+         * interrupt threads. If it ever spins without blocking, the whole Fox
+         * freezes. Count passes per second and back off when it spins. */
+        spin_n++;
+        time_t now_t = time(NULL);
+        if (now_t != spin_t) {
+            if (spin_n > 20000) {
+                evlog("loop spinning (%lu passes/s, play=%d prebuf=%d): backing off", spin_n, play_started, need_prebuffer);
+                usleep(20000);
+            }
+            spin_n = 0;
+            spin_t = now_t;
+        }
+        /* a line a minute while playing: shows when and in what state it stopped */
+        if (play_started && now_t - hb_t >= 60) {
+            hb_t = now_t;
+            evlog("playing %u Hz: writes %lu, I2S underruns %lu, USB overruns %lu",
+                  current_rate, write_count, xrun_count, cap_xrun_count);
+        }
         /* ── Uevent: rate change detection ───────────────────────── */
         ssize_t len = recv(uevent_sock, uevent_buf, sizeof(uevent_buf) - 1, MSG_DONTWAIT);
         if (len > 0) {
@@ -623,12 +672,16 @@ int main(void) {
             accum_pos = 0;
             snd_pcm_prepare(pcm_capture);
             snd_pcm_start(pcm_capture);
+            usleep(1000);
         } else if (frames == -ENODEV || frames == -EBADF) {
             close_pcms();
             play_started = 0;
             accum_pos = 0;
             usleep(500000);
+        } else if (frames == 0) {
+            usleep(1000);            /* nothing read: never spin at FIFO 70 */
         } else if (frames < 0) {
+            usleep(1000);
             if (++consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
                 fprintf(stderr, "[ERROR] Too many capture errors (last=%ld), reopening\n", (long)frames);
                 evlog("too many USB capture errors (%s), reopening", snd_strerror((int)frames));

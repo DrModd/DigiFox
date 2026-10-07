@@ -49,8 +49,10 @@
 /* filter settings (web page I2S): phase=lin|int|min rolloff=steep|std|slow gain=0|-3
  * re-read by the pump thread, so a change is heard within a second */
 #define FILTER_FILE "/etc/digifox/srcfilter"
-/* rare events (stream set up, I2S starved, xrun) — always on, for diag.php */
-#define EVENT_LOG   "/tmp/digifox_events.log"
+/* rare events (stream set up, I2S starved, xrun) — always on, kept on the
+ * flash (survive a hang and the reboot), shown by diag.php */
+#define EVENT_DIR   "/var/lib/digifox"
+#define EVENT_LOG   EVENT_DIR "/events.log"
 /* nothing written to the I2S for this long while running: its DMA loops the
  * last buffer (a loud buzz) — stop it and wait for data again */
 #define STARVE_S    0.3
@@ -156,19 +158,26 @@ static int dsd_bits(snd_pcm_format_t f)
 static void evlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void evlog(const char *fmt, ...)
 {
+    /* at most 30 lines a minute: a fault that repeats must not wear the flash */
+    static time_t win; static int n;
+    time_t t = time(NULL);
+    if (t - win >= 60) { win = t; n = 0; }
+    if (++n > 30) return;
     struct stat st;
+    mkdir(EVENT_DIR, 0755);
     if (stat(EVENT_LOG, &st) == 0 && st.st_size > 65536) rename(EVENT_LOG, EVENT_LOG ".old");
     FILE *f = fopen(EVENT_LOG, "a");
     if (!f) return;
-    time_t t = time(NULL);
     struct tm tm;
     localtime_r(&t, &tm);
-    fprintf(f, "%02d.%02d %02d:%02d:%02d [%d] ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
+    fprintf(f, "%02d.%02d %02d:%02d:%02d " "src[%d] ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
     va_list ap;
     va_start(ap, fmt);
     vfprintf(f, fmt, ap);
     va_end(ap);
     fputc('\n', f);
+    fflush(f);
+    fsync(fileno(f));            /* survives a hang and the hard reset after it */
     fclose(f);
 }
 
