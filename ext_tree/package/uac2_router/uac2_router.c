@@ -26,6 +26,33 @@
 #include <stdint.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <stdarg.h>
+#include <time.h>
+
+/* DigiFox: rare events into the same log as the converter (diag.php) */
+#define EVENT_LOG       "/tmp/digifox_events.log"
+/* the host sends nothing for this long while the I2S plays: the RV1106 DMA
+ * would loop its last buffer (a loud buzz) — stop the I2S, wait for data */
+#define USB_STARVE_MS   250
+
+static void evlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void evlog(const char *fmt, ...)
+{
+    struct stat st;
+    if (stat(EVENT_LOG, &st) == 0 && st.st_size > 65536) rename(EVENT_LOG, EVENT_LOG ".old");
+    FILE *f = fopen(EVENT_LOG, "a");
+    if (!f) return;
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    fprintf(f, "%02d.%02d %02d:%02d:%02d usb: ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
 /* time.h not needed — status log uses frame counter instead of time() syscall */
 
 /* ── Device constants ─────────────────────────────────────────────── */
@@ -434,6 +461,8 @@ int main(void) {
                 if (rate > 0 && rate != (int)current_rate) {
                     printf("\n[CHANGE] %u -> %u Hz (w=%lu x=%lu)\n",
                            current_rate, rate, write_count, xrun_count);
+                    evlog("rate %u -> %d Hz, output %s (writes %lu, xruns %lu)",
+                          current_rate, rate, i2s_device(), write_count, xrun_count);
                     if (configure_audio(rate, uac_card, &buffer, &buffer_size, &period_size) == 0) {
                         current_rate = rate;
                         pb_period = playback_period;
@@ -507,6 +536,17 @@ int main(void) {
         }
 
         /* ── Steady state: capture → byte-swap → accumulate → write ── */
+        /* watchdog: no data from the host -> stop the I2S instead of a buzz */
+        if (play_started && snd_pcm_wait(pcm_capture, USB_STARVE_MS) == 0) {
+            evlog("no data from the host for %d ms at %u Hz: I2S stopped, waiting (writes %lu)",
+                  USB_STARVE_MS, current_rate, write_count);
+            snd_pcm_drop(pcm_playback);
+            snd_pcm_prepare(pcm_playback);
+            need_prebuffer = 1;
+            play_started = 0;
+            accum_pos = 0;
+            continue;
+        }
         snd_pcm_sframes_t frames = snd_pcm_readi(pcm_capture, buffer, period_size);
 
         if (frames > 0) {
@@ -545,12 +585,23 @@ int main(void) {
                         /* XRUN recovery: re-enter pre-buffer phase */
                         xrun_count++;
                         fprintf(stderr, "[XRUN] Playback underrun #%lu at w=%lu\n", xrun_count, write_count);
+                        evlog("I2S underrun #%lu at %u Hz (writes %lu)", xrun_count, current_rate, write_count);
                         snd_pcm_prepare(pcm_playback);
                         need_prebuffer = 1;
                         play_started = 0;
                         break;
                     } else if (wr == -ENODEV || wr == -EBADF) {
+                        evlog("I2S output gone (%s), reopening", snd_strerror((int)wr));
                         close_pcms();
+                        play_started = 0;
+                        break;
+                    } else if (wr < 0) {
+                        /* anything else (ESTRPIPE, EIO, ...): nothing would reach the
+                         * I2S while it keeps running — start over */
+                        evlog("I2S write error %s at %u Hz: restarting output", snd_strerror((int)wr), current_rate);
+                        snd_pcm_drop(pcm_playback);
+                        snd_pcm_prepare(pcm_playback);
+                        need_prebuffer = 1;
                         play_started = 0;
                         break;
                     }
@@ -568,6 +619,7 @@ int main(void) {
         } else if (frames == -EPIPE) {
             cap_xrun_count++;
             fprintf(stderr, "[XRUN] Capture overrun #%lu\n", cap_xrun_count);
+            evlog("USB capture overrun #%lu at %u Hz", cap_xrun_count, current_rate);
             accum_pos = 0;
             snd_pcm_prepare(pcm_capture);
             snd_pcm_start(pcm_capture);
@@ -579,6 +631,7 @@ int main(void) {
         } else if (frames < 0) {
             if (++consecutive_errors >= MAX_CONSECUTIVE_ERRORS) {
                 fprintf(stderr, "[ERROR] Too many capture errors (last=%ld), reopening\n", (long)frames);
+                evlog("too many USB capture errors (%s), reopening", snd_strerror((int)frames));
                 close_pcms();
                 consecutive_errors = 0;
                 play_started = 0;
