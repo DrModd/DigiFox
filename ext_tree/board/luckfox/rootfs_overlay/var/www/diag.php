@@ -92,6 +92,7 @@ $dmesg = sh('/usr/bin/sudo -n dmesg | tail -n 40');
 if ($dmesg === '') $dmesg = sh('dmesg | tail -n 40');
 $logs = [];
 foreach ([['Ядро (dmesg)', $dmesg],
+          ['События пересчёта (digifox_events.log)', tail_file('/tmp/digifox_events.log', 30)],
           ['Пересчёт (digifox_src.log)', tail_file('/tmp/digifox_src.log', 30)],
           ['Qobuz (qobuz-meta.log)', tail_file('/tmp/qobuz-meta.log', 20)]] as [$t, $x]) {
     if ($x !== '') $logs[] = ['title' => $t, 'text' => $x];

@@ -20,6 +20,7 @@
  * GPL-2.0-or-later. DigiFox.
  */
 #include <errno.h>
+#include <stdarg.h>
 #include <math.h>
 #include <poll.h>
 #include <pthread.h>
@@ -48,6 +49,11 @@
 /* filter settings (web page I2S): phase=lin|int|min rolloff=steep|std|slow gain=0|-3
  * re-read by the pump thread, so a change is heard within a second */
 #define FILTER_FILE "/etc/digifox/srcfilter"
+/* rare events (stream set up, I2S starved, xrun) — always on, for diag.php */
+#define EVENT_LOG   "/tmp/digifox_events.log"
+/* nothing written to the I2S for this long while running: its DMA loops the
+ * last buffer (a loud buzz) — stop it and wait for data again */
+#define STARVE_S    0.3
 /* loudness compensation (web page I2S): "on" / "off", optional "ref=N" —
  * no correction in the top N dB of the volume range (default 20) */
 #define LOUD_FILE   "/etc/digifox/loudness"
@@ -145,6 +151,25 @@ static int dsd_bits(snd_pcm_format_t f)
     case SND_PCM_FORMAT_DSD_U32_BE: return 32;
     default:                        return 0;
     }
+}
+
+static void evlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void evlog(const char *fmt, ...)
+{
+    struct stat st;
+    if (stat(EVENT_LOG, &st) == 0 && st.st_size > 65536) rename(EVENT_LOG, EVENT_LOG ".old");
+    FILE *f = fopen(EVENT_LOG, "a");
+    if (!f) return;
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    fprintf(f, "%02d.%02d %02d:%02d:%02d [%d] ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
 }
 
 static void report_in(const char *s)
@@ -419,6 +444,7 @@ static void convert_chunk(dfx_t *d)
 static int slave_recover(dfx_t *d, int err)
 {
     d->xruns++;
+    evlog("I2S xrun/recover: %s", snd_strerror(err));
     if (err == -EPIPE || err == -ESTRPIPE || err == -EBADFD) {
         int e = snd_pcm_prepare(d->slave);
         return e < 0 ? e : 0;
@@ -450,6 +476,8 @@ static int flush(dfx_t *d)
                           d->io.buffer_size - used < d->io.period_size;
             if (!stalled) break;
             d->stalls++;
+            evlog("player stalled with %lu frames staged: starting with silence padding",
+                  (unsigned long)pending);
             snd_pcm_uframes_t z = (d->s_period - pending % d->s_period) % d->s_period;
             if (z && d->st_len + z <= ST_CAP) {
                 memmove(d->st + (d->st_pos + z) * CH, d->st + d->st_pos * CH, pending * CH * sizeof(int32_t));
@@ -683,6 +711,9 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
         snprintf(in, sizeof in, "%u %s", io->rate, snd_pcm_format_name(io->format));
     }
     report_in(in);
+    evlog("stream %s -> 192000 S32_LE (%s, buffer %lu, period %lu)", in,
+          d->mode == M_PASS ? "passthrough" : d->mode == M_DSD ? "DSD decimator + soxr" : "soxr",
+          (unsigned long)io->buffer_size, (unsigned long)io->period_size);
     return 0;
 }
 
@@ -897,7 +928,8 @@ static void *pump_thread(void *arg)
     struct sched_param sp = { .sched_priority = 45 };
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     struct pollfd pfd[8];
-    double next_log = 0, next_cfg = 0, next_loud = 0;
+    double next_log = 0, next_cfg = 0, next_loud = 0, last_w_t = 0;
+    unsigned long last_w = 0;
     for (;;) {
         pthread_mutex_lock(&d->lock);
         if (d->quit) { pthread_mutex_unlock(&d->lock); break; }
@@ -919,6 +951,7 @@ static void *pump_thread(void *arg)
             }
         }
         int nf = 0, active = d->running && d->st;
+        if (!active) last_w_t = 0;
         /* filter settings changed on the web page: rebuild the resampler */
         if (d->st && (d->mode == M_PCM || d->mode == M_DSD) && t >= next_cfg) {
             next_cfg = t + 0.5;
@@ -937,6 +970,20 @@ static void *pump_thread(void *arg)
         }
         if (active) {
             pump(d);
+            /* watchdog: the I2S keeps running but gets nothing -> buzz. Stop it;
+             * flush() pre-buffers and starts again when data comes. */
+            if (d->writes != last_w || last_w_t == 0) { last_w = d->writes; last_w_t = t; }
+            else if (t - last_w_t > STARVE_S && d->slave &&
+                     snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING) {
+                snd_pcm_sframes_t sd = -1;
+                snd_pcm_delay(d->slave, &sd);
+                evlog("I2S starved %.0f ms (ring %lu, staged %lu, delay %ld, rate %u): stopped, waiting for data",
+                      (t - last_w_t) * 1000, (unsigned long)(d->wpos - d->hw),
+                      (unsigned long)(d->st_len - d->st_pos), (long)sd, d->io.rate);
+                snd_pcm_drop(d->slave);
+                snd_pcm_prepare(d->slave);
+                last_w_t = t;
+            }
             /* data waiting for room in the I2S buffer: also wake on the slave */
             int waiting = d->wpos != d->hw || d->st_len - d->st_pos >= d->s_period;
             if (waiting && d->slave && snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING)
