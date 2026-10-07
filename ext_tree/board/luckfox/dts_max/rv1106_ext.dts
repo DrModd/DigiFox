@@ -160,3 +160,8 @@
 &tsadc {
 	status = "okay";
 };
+
+/* DigiFox: hardware watchdog — S98digifox-guard feeds it; a full freeze reboots the Fox */
+&wdt {
+	status = "okay";
+};
