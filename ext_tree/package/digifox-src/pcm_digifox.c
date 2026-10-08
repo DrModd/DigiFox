@@ -155,31 +155,9 @@ static int dsd_bits(snd_pcm_format_t f)
     }
 }
 
-static void evlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void evlog(const char *fmt, ...)
-{
-    /* at most 30 lines a minute: a fault that repeats must not wear the flash */
-    static time_t win; static int n;
-    time_t t = time(NULL);
-    if (t - win >= 60) { win = t; n = 0; }
-    if (++n > 30) return;
-    struct stat st;
-    mkdir(EVENT_DIR, 0755);
-    if (stat(EVENT_LOG, &st) == 0 && st.st_size > 65536) rename(EVENT_LOG, EVENT_LOG ".old");
-    FILE *f = fopen(EVENT_LOG, "a");
-    if (!f) return;
-    struct tm tm;
-    localtime_r(&t, &tm);
-    fprintf(f, "%02d.%02d %02d:%02d:%02d " "src[%d] ", tm.tm_mday, tm.tm_mon + 1, tm.tm_hour, tm.tm_min, tm.tm_sec, (int)getpid());
-    va_list ap;
-    va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
-    va_end(ap);
-    fputc('\n', f);
-    fflush(f);
-    fsync(fileno(f));            /* survives a hang and the hard reset after it */
-    fclose(f);
-}
+#define EVLOG_PREFIX     "src[%d] "
+#define EVLOG_PREFIX_ARG , (int)getpid()
+#include "evlog_async.h"
 
 static void report_in(const char *s)
 {
@@ -924,6 +902,7 @@ static int dfx_close(snd_pcm_ioplug_t *io)
     if (d->slave) snd_pcm_close(d->slave);
     free(d->slave_name);
     free(d);
+    evlog_stop();
     return 0;
 }
 
@@ -1112,6 +1091,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     d->slave_name = strdup(slave);
     d->quality = !strcmp(quality, "hq") ? Q_HQ : !strcmp(quality, "vhq") ? Q_VHQ : Q_AUTO;
     d->slave = NULL;                 /* opened on the first hw_params (setup_slave) */
+    evlog_start();
 
     d->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     d->kfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
