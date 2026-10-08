@@ -13,9 +13,28 @@ LOG_DIR=/var/lib/digifox
 LOG=$LOG_DIR/events.log
 PIDFILE=/var/run/digifox-guard.pid
 
+TMP_LOG=/tmp/digifox_events.log   # сюда пишут модуль пересчёта и пересылка (в ОЗУ)
+
+rotate() {
+    [ -f $LOG ] && [ "$(wc -c < $LOG)" -gt 65536 ] && mv -f $LOG $LOG.old
+}
+
 log() {
     mkdir -p $LOG_DIR
+    rotate
     echo "$(date '+%d.%m %H:%M:%S') guard: $*" >> $LOG
+    sync
+}
+
+# строки из ОЗУ — на флеш (раз в 5 с): переживут зависание и перезагрузку
+persist() {
+    [ -s $TMP_LOG ] || return
+    mkdir -p $LOG_DIR
+    mv -f $TMP_LOG $TMP_LOG.mv 2>/dev/null || return
+    usleep 100000 2>/dev/null || sleep 1     # дописывающий в старый файл успеет
+    rotate
+    cat $TMP_LOG.mv >> $LOG
+    rm -f $TMP_LOG.mv
     sync
 }
 
@@ -27,6 +46,7 @@ guard_loop() {
     hot=0; last_pid=""; last_t=0
     while true; do
         sleep 5
+        persist
         pid=$(pidof uac2_router | awk '{print $1}')
         if [ -z "$pid" ]; then hot=0; last_pid=""; continue; fi
         t=$(ticks $pid)
