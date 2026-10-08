@@ -40,7 +40,7 @@
 
 #define OUT_RATE    192000
 #define CH          2
-#define ST_CAP      32768           /* staging, output frames               */
+#define ST_CAP      65536           /* staging, output frames               */
 #define ST_ROOM     12288           /* free staging needed to convert a chunk */
 #define PCM_CHUNK   1024            /* input frames per PCM conversion step  */
 #define DSD_CHUNK   2048            /* bytes per channel per DSD step        */
@@ -139,6 +139,8 @@ typedef struct {
      * room but the ring did not — starving the USB driver on the single core. */
     int          efd, ev_set;
     int          kfd;               /* eventfd: wake the pump thread         */
+    int          small_buf;         /* the USB router: keep the I2S queue short */
+    double       last_write;        /* now_s() of the last slave write (log)  */
 } dfx_t;
 
 /* ------------------------------------------------------------ helpers */
@@ -158,6 +160,8 @@ static int dsd_bits(snd_pcm_format_t f)
 #define EVLOG_PREFIX     "src[%d] "
 #define EVLOG_PREFIX_ARG , (int)getpid()
 #include "evlog_async.h"
+
+static double now_s(void);
 
 static void report_in(const char *s)
 {
@@ -207,6 +211,12 @@ static int setup_slave(dfx_t *d)
      * inside an ALSA call, so the slave must bridge the player's sleeps;
      * short enough that the extra latency stays small */
     snd_pcm_uframes_t period = 1024, buffer = 16384;
+    /* Players with big buffers of their own (Qobuz: 3 s) get ~340 ms on the
+     * I2S: a CPU hiccup (network burst while the next track downloads) must
+     * not empty it — 85 ms did, a burst of xruns = stutter. The USB router
+     * keeps 85 ms: its own buffer is tiny and latency matters there. The
+     * driver clamps the size to what its DMA buffer allows. */
+    if (!d->small_buf) buffer = 65536;
 
     if ((err = snd_pcm_hw_params_any(d->slave, hp)) < 0) return err;
     if ((err = snd_pcm_hw_params_set_access(d->slave, hp, SND_PCM_ACCESS_RW_INTERLEAVED)) < 0) return err;
@@ -431,7 +441,10 @@ static void convert_chunk(dfx_t *d)
 static int slave_recover(dfx_t *d, int err)
 {
     d->xruns++;
-    evlog("I2S xrun/recover: %s", snd_strerror(err));
+    evlog("I2S xrun/recover: %s (rate %u, ring %lu, staged %lu, last write %.0f ms ago, I2S buffer %lu)",
+          snd_strerror(err), d->io.rate, (unsigned long)(d->wpos - d->hw),
+          (unsigned long)(d->st_len - d->st_pos),
+          d->last_write > 0 ? (now_s() - d->last_write) * 1000 : -1.0, (unsigned long)d->s_buffer);
     if (err == -EPIPE || err == -ESTRPIPE || err == -EBADFD) {
         int e = snd_pcm_prepare(d->slave);
         return e < 0 ? e : 0;
@@ -483,6 +496,7 @@ static int flush(dfx_t *d)
         if (w < 0) { if (slave_recover(d, (int)w) < 0) { full = 1; break; } continue; }
         d->st_pos += w;
         d->writes++;
+        d->last_write = now_s();
         /* pre-buffer written: start now (the RV1106 starts by itself on the
          * first write anyway; other cards wait for start_threshold) */
         if (snd_pcm_state(d->slave) == SND_PCM_STATE_PREPARED) snd_pcm_start(d->slave);
@@ -688,7 +702,9 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
     /* pre-buffer half a slave buffer (~43 ms). update_played() counts at most
      * half the player's buffer as queued, so even a player with a tiny buffer
      * can fill it; the stall check in flush() covers the rest. */
-    d->prebuf = d->s_buffer / 2 - (d->s_buffer / 2) % d->s_period;
+    /* at most ~85 ms: the rest of a big I2S buffer fills while playing */
+    d->prebuf = d->s_buffer / 2 < 16384 ? d->s_buffer / 2 : 16384;
+    d->prebuf -= d->prebuf % d->s_period;
     if (!d->prebuf) d->prebuf = d->s_period;
     char in[48];
     if (d->mode == M_DSD) {
@@ -917,6 +933,7 @@ static void *pump_thread(void *arg)
     pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
     struct pollfd pfd[8];
     double next_log = 0, next_cfg = 0, next_loud = 0, last_w_t = 0;
+    snd_pcm_sframes_t wd_sd = 0;
     unsigned long last_w = 0;
     for (;;) {
         pthread_mutex_lock(&d->lock);
@@ -962,9 +979,10 @@ static void *pump_thread(void *arg)
              * flush() pre-buffers and starts again when data comes. */
             if (d->writes != last_w || last_w_t == 0) { last_w = d->writes; last_w_t = t; }
             else if (t - last_w_t > STARVE_S && d->slave &&
-                     snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING) {
-                snd_pcm_sframes_t sd = -1;
-                snd_pcm_delay(d->slave, &sd);
+                     snd_pcm_state(d->slave) == SND_PCM_STATE_RUNNING &&
+                     snd_pcm_delay(d->slave, &wd_sd) == 0 && wd_sd < (snd_pcm_sframes_t)d->s_period) {
+                /* a big I2S queue legitimately plays 300 ms without writes */
+                snd_pcm_sframes_t sd = wd_sd;
                 evlog("I2S starved %.0f ms (ring %lu, staged %lu, delay %ld, rate %u): stopped, waiting for data",
                       (t - last_w_t) * 1000, (unsigned long)(d->wpos - d->hw),
                       (unsigned long)(d->st_len - d->st_pos), (long)sd, d->io.rate);
@@ -1091,6 +1109,12 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     d->slave_name = strdup(slave);
     d->quality = !strcmp(quality, "hq") ? Q_HQ : !strcmp(quality, "vhq") ? Q_VHQ : Q_AUTO;
     d->slave = NULL;                 /* opened on the first hw_params (setup_slave) */
+    {   /* the USB router needs a short I2S queue (see setup_slave) */
+        char comm[32] = "";
+        FILE *cf = fopen("/proc/self/comm", "r");
+        if (cf) { if (!fgets(comm, sizeof comm, cf)) comm[0] = 0; fclose(cf); }
+        d->small_buf = strncmp(comm, "uac2_router", 11) == 0;
+    }
     evlog_start();
 
     d->efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
