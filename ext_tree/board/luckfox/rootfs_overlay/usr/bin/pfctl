@@ -39,6 +39,7 @@
 #   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von>]
 #                     от усилителя: настройки -> /tmp/amp_cfg. Ответа нет.
 #   aver <версия>     от усилителя: версия прошивки -> /tmp/amp_ver. Ответа нет.
+#   alog <текст>      от усилителя: строка в журнал событий (events.log). Ответа нет.
 #   aak 0|1           от усилителя: есть ли AK4137 -> /tmp/amp_ak. Нет AK4137 —
 #                     Фокс сам включает пересчёт частоты (digifox-srcmode fox).
 #
@@ -135,6 +136,9 @@ do_cmd() {
         acfg) # настройки усилителя от STM32
             echo "$2 $3 $4 $5 $6 $7 $8 $9" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
         aver) echo "$2" > /tmp/amp_ver ;;
+        alog) # строка от усилителя в журнал событий (причина выключения, перезапуск МК)
+            shift
+            echo "$(date '+%d.%m %H:%M:%S') amp: $*" >> /tmp/digifox_events.log ;;
         aak)  # есть ли AK4137 в усилителе; без неё пересчитывать обязан Фокс
             echo "$2" > /tmp/amp_ak
             if [ "$2" = 0 ] && [ "$(/usr/bin/digifox-srcmode)" != fox ]; then
