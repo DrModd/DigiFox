@@ -42,7 +42,7 @@ touch "$LOCK"
 # остановить pfctl serve (init перезапустит его, и он будет ждать снятия LOCK)
 for pid in $(ps | awk '/pfctl serve/ && !/awk/ {print $1}'); do kill "$pid" 2>/dev/null; done
 killall pfrate 2>/dev/null
-sleep 2                                     # усилитель сохраняет настройки и перезапускается
+sleep 6                                     # усилитель 5 с показывает FIRMWARE UPDATE, сохраняет настройки и перезапускается
 
 rc=1
 for try in 1 2 3; do
