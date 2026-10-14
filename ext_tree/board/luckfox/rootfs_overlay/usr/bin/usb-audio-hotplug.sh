@@ -8,6 +8,7 @@ USB_CARD_STATE=/tmp/usb-audio-card
 CARD_DEVICE=$(readlink -f "/sys/class/sound/$MDEV/device" 2>/dev/null || true)
 IS_USB_CARD=0
 case "$CARD_DEVICE" in
+    */gadget*) exit 0 ;;        # DigiFox: своя карта UAC2 (USB -> I2S), не USB-ЦАП
     */usb*) IS_USB_CARD=1 ;;
 esac
 

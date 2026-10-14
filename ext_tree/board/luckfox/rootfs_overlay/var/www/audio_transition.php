@@ -8,9 +8,14 @@ function acquireAudioTransitionLock() {
         return false;
     }
 
-    if (!flock($lock, LOCK_EX | LOCK_NB)) {
-        fclose($lock);
-        return false;
+    // DigiFox: подождать до 8 с, если переключение ещё идёт (выход из
+    // USB -> I2S, обработчик USB), а не отказывать сразу
+    for ($i = 0; !flock($lock, LOCK_EX | LOCK_NB); $i++) {
+        if ($i >= 80) {
+            fclose($lock);
+            return false;
+        }
+        usleep(100000);
     }
 
     return $lock;
