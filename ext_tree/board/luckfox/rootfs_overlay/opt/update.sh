@@ -97,6 +97,8 @@ rsync -ac --delete-before \
     --filter='protect /etc/digifox/' \
     --filter='protect /var/lib/digifox/' \
     --filter='protect /etc/resolv.conf' \
+    --filter='protect /etc/hostname' \
+    --filter='protect /etc/hosts' \
     --filter='protect /etc/dropbear/dropbear_*_host_key' \
     --filter='protect /data/ethaddr.txt' \
     --filter='protect /var/www/radio.json' \
