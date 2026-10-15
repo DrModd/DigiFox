@@ -60,8 +60,8 @@ start() {
 
     # Device Strings - minimal as in the original
     mkdir -p strings/0x409
-    echo "PureCore" > strings/0x409/manufacturer
-    echo "PureCore USB Hi-Resolution Audio" > strings/0x409/product
+    echo "DigiD" > strings/0x409/manufacturer
+    echo "DigiFox USB Audio" > strings/0x409/product
     # Serial number = 0x00 (empty) as in the original
     echo "" > strings/0x409/serialnumber
 
@@ -108,7 +108,7 @@ start() {
     echo 1 > functions/uac2.usb0/p_hs_bint
 
     # Function name - shown in Windows as device name
-    echo "PureCore" > functions/uac2.usb0/function_name
+    echo "DigiFox" > functions/uac2.usb0/function_name
 
     # Configuration 1 - UAC2 Audio (Self-powered)
     mkdir -p configs/c.1
