@@ -39,6 +39,39 @@ fetch() {   # fetch <name> <out>
 
 trap cleanup INT TERM
 
+# Обновление всегда идёт отдельным процессом (setsid), с журналом в $ULOG.
+# Тот, кто его запустил (веб-страница, ssh), только показывает журнал.
+# Если веб-сервер, PHP или ssh-сессия оборвутся посреди записи файлов,
+# обновление всё равно дойдёт до конца — иначе файлы остаются недописанными
+# (так php-cgi оказался пустым, 0 байт, и веб отвечал 500).
+ULOG=/tmp/digifox-update.log
+UPID=/tmp/digifox-update.pid
+END_MARK='@@UPDATE-END@@'
+if [ "$1" != "--check" ] && [ -z "$DIGIFOX_UPD_CHILD" ]; then
+    pid=$(cat "$UPID" 2>/dev/null)
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        echo "Обновление уже идёт, показываю журнал:"
+    else
+        : > "$ULOG"
+        DIGIFOX_UPD_CHILD=1 setsid sh -c "\"$0\" $*; echo '$END_MARK'" >> "$ULOG" 2>&1 < /dev/null &
+        echo $! > "$UPID"
+    fi
+    # показать журнал до конца обновления (обрыв просмотра не мешает обновлению)
+    pid=$(cat "$UPID" 2>/dev/null); shown=0; gone=0
+    while :; do
+        total=$(wc -l < "$ULOG" 2>/dev/null || echo 0)
+        if [ "$total" -gt "$shown" ]; then
+            sed -n "$((shown + 1)),${total}p" "$ULOG" | grep -v "^$END_MARK\$"
+            shown=$total
+        fi
+        grep -q "^$END_MARK\$" "$ULOG" 2>/dev/null && break
+        if [ ! -d "/proc/$pid" ]; then gone=$((gone + 1)); [ $gone -gt 2 ] && break; fi
+        sleep 1
+    done
+    exit 0
+fi
+trap '' HUP PIPE
+
 FORCE=0
 case "$1" in
     --force) FORCE=1 ;;
@@ -112,6 +145,8 @@ sync
 
 # второй проход: rsync -c заново сверяет каждый файл с образом и переписывает
 # те, что не совпали (так однажды повредился php-cgi и пропал веб-интерфейс)
+# сбросить кэш, чтобы сверка читала файлы с флеша, а не из памяти
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
 log "Проверяю записанные файлы..."
 sync_root || fail "повторная проверка файлов не прошла — повторите обновление"
 
@@ -156,5 +191,6 @@ sync
 log "Готово: $CUR_BUILD -> $NEW_BUILD"
 log "Перезагрузка через 5 секунд..."
 cleanup
-( sleep 5; reboot ) >/dev/null 2>&1 &
+sync
+( sleep 5; sync; reboot ) >/dev/null 2>&1 &
 exit 0
