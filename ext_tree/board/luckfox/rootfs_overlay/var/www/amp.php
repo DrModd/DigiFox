@@ -155,7 +155,11 @@ if (isset($_GET['full'])) {
     // прошивка усилителя, встроенная в DigiFox: предложить, если новее установленной
     $bv = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.ver'));
     $out['fw_builtin'] = $bv !== '' ? $bv : null;
-    $out['fw_update'] = $bv !== '' && $st !== null && ($v === '' || version_compare($bv, $v, '>'));
+    // встроенная прошивка собрана для экрана ST7789: усилителю с другим экраном не предлагать
+    $disp = trim((string)@file_get_contents('/tmp/amp_disp'));
+    $out['disp'] = $disp !== '' ? $disp : 'st7789';
+    $out['fw_update'] = $bv !== '' && $st !== null && $out['disp'] === 'st7789' &&
+                        ($v === '' || version_compare($bv, $v, '>'));
     $tz = tz_get($tz_file);
     $out['tz'] = $tz;
     $out['now'] = trim((string)shell_exec('TZ=' . escapeshellarg($tz) . ' date +%H:%M'));

@@ -36,7 +36,12 @@ say "Перевожу усилитель в режим обновления…"
 i=0
 while [ -f /tmp/amp_req ] && [ $i -lt 20 ]; do sleep 0.2; i=$((i + 1)); done
 echo dfu > /tmp/amp_req.flash && mv /tmp/amp_req.flash /tmp/amp_req
-sleep 1                                     # pfctl отправит @DFU
+# дождаться, пока pfctl заберёт запрос и отправит @DFU (иначе его можно
+# остановить раньше — и усилитель так и не перейдёт в режим прошивки)
+i=0
+while [ -f /tmp/amp_req ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+[ -f /tmp/amp_req ] && { rm -f /tmp/amp_req; fail "pfctl не отправил команду усилителю — он на связи?"; }
+sleep 0.5
 
 touch "$LOCK"
 # остановить pfctl serve (init перезапустит его, и он будет ждать снятия LOCK)
@@ -45,7 +50,7 @@ killall pfrate 2>/dev/null
 sleep 6                                     # усилитель 5 с показывает FIRMWARE UPDATE, сохраняет настройки и перезапускается
 
 rc=1
-for try in 1 2 3; do
+for try in 1 2 3 4; do
     say "Прошиваю (попытка $try)…"
     rm -f /tmp/amp_flash.rc
     # прогресс — каждые 10 %, плюс строки о чипе и ошибки
@@ -57,7 +62,7 @@ for try in 1 2 3; do
         /Device ID|Interface|Fail|fail|rror|Unexpected|annot|NACK/ { print "  " $0 }'
     rc=$(cat /tmp/amp_flash.rc 2>/dev/null || echo 1)
     [ "$rc" = 0 ] && break
-    sleep 1
+    sleep 2
 done
 rm -f /tmp/amp_flash.rc "$LOCK"             # pfctl serve снова займёт порт
 

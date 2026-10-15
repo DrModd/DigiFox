@@ -9,6 +9,11 @@ header('X-Accel-Buffering: no');
 $builtin = '/usr/share/digifox/amp-fw.bin';
 $bin = '/tmp/amp_fw.bin';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['builtin'] ?? '') === '1') {
+    $disp = trim((string)@file_get_contents('/tmp/amp_disp'));
+    if ($disp !== '' && $disp !== 'st7789') {
+        echo "ОШИБКА: встроенная прошивка — для экрана ST7789, а у усилителя $disp. Прошейте файл .bin для своего экрана\n";
+        exit;
+    }
     if (!is_file($builtin) || !@copy($builtin, $bin)) {
         http_response_code(404);
         echo "ОШИБКА: в этой версии DigiFox нет встроенной прошивки усилителя\n";

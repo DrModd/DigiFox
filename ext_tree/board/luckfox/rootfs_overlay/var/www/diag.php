@@ -56,7 +56,7 @@ $ampver = rd('/tmp/amp_ver');
 $ak = rd('/tmp/amp_ak');
 $amp = [
     ['Связь', is_file('/tmp/amp_state') ? 'есть' . ($age !== null ? ', последний ответ ' . dur(max(0, $age)) . ' назад' : '') : 'нет ответа от усилителя'],
-    ['Прошивка', $ampver !== '' ? $ampver : '—'],
+    ['Прошивка', $ampver !== '' ? $ampver . (rd('/tmp/amp_disp') !== '' ? ', экран ' . strtoupper(rd('/tmp/amp_disp')) : '') : '—'],
     ['Встроенная в DigiFox', rd('/usr/share/digifox/amp-fw.ver') ?: '—'],
     ['Питание', count($st) >= 5 ? ($st[4] === '1' ? 'включён' : 'дежурный режим') : '—'],
     ['Громкость', count($st) >= 2 ? $st[0] . ' из ' . $st[1] . ($st[2] === '1' ? ', MUTE' : '') : '—'],
