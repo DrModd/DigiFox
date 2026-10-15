@@ -14,6 +14,8 @@ LOG=$LOG_DIR/events.log
 PIDFILE=/var/run/digifox-guard.pid
 
 TMP_LOG=/tmp/digifox_events.log   # сюда пишут модуль пересчёта и пересылка (в ОЗУ)
+# время в журнале — в часовом поясе Фокса (как у pfctl), а не в UTC
+TZ=$(cat /etc/digifox/tz 2>/dev/null); export TZ=${TZ:-MSK-3}
 
 rotate() {
     [ -f $LOG ] && [ "$(wc -c < $LOG)" -gt 65536 ] && mv -f $LOG $LOG.old

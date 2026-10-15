@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -37,6 +38,19 @@ static void evlog(const char *fmt, ...)
     static time_t win;
     static int cnt;
     char line[320];
+    static int tz_done;
+    if (!tz_done) {                 /* часовой пояс Фокса (/etc/digifox/tz), если плеер запущен без TZ */
+        pthread_mutex_lock(&mx);
+        if (!tz_done && !getenv("TZ")) {
+            char z[32] = "MSK-3";
+            FILE *f = fopen("/etc/digifox/tz", "r");
+            if (f) { if (fgets(z, sizeof z, f)) z[strcspn(z, "\r\n")] = 0; fclose(f); }
+            if (z[0]) setenv("TZ", z, 1);
+            tzset();
+        }
+        tz_done = 1;
+        pthread_mutex_unlock(&mx);
+    }
     time_t t = time(NULL);
     struct tm tm;
     localtime_r(&t, &tm);
