@@ -85,7 +85,8 @@ cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 
 # ---- файлы ----
 log "Обновляю файлы системы..."
-rsync -ac --delete-before \
+sync_root() {
+    rsync -ac --delete-before \
     --exclude=/dev --exclude=/proc --exclude=/sys --exclude=/tmp --exclude=/run \
     --exclude=/mnt --exclude=/media --exclude=/root --exclude=/var/run --exclude=/var/log \
     --filter='protect /etc/i2s.conf' \
@@ -104,7 +105,15 @@ rsync -ac --delete-before \
     --filter='protect /var/www/radio.json' \
     --filter='protect /usr/aplayer/*.dat' \
     --filter='protect /usr/aprenderer/*.dat' \
-    "$NEW/" / || fail "rsync завершился с ошибкой — система могла обновиться частично, повторите обновление"
+    "$NEW/" /
+}
+sync_root || fail "rsync завершился с ошибкой — система могла обновиться частично, повторите обновление"
+sync
+
+# второй проход: rsync -c заново сверяет каждый файл с образом и переписывает
+# те, что не совпали (так однажды повредился php-cgi и пропал веб-интерфейс)
+log "Проверяю записанные файлы..."
+sync_root || fail "повторная проверка файлов не прошла — повторите обновление"
 
 # настройки I2S: файл конфигурации сохранён, S94ioi2s пришёл новый (PLL) — привести в соответствие
 [ -f "$WORK/i2s.conf" ] && cp "$WORK/i2s.conf" /etc/i2s.conf
