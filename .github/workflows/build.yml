@@ -149,3 +149,16 @@ jobs:
             release/boot.img
             release/version.txt
             release/SHA256SUMS
+
+      # Хранить только 10 последних релизов (каждый ~100 МБ); онлайн-обновление берёт последний
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases?per_page=100" \
+            --jq 'sort_by(.created_at) | reverse | .[10:] | .[] | "\(.id) \(.tag_name)"' |
+          while read -r id tag; do
+            echo "delete $tag"
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$id" || true
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$tag" || true
+          done
