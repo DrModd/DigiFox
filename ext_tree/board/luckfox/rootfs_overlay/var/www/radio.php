@@ -110,6 +110,7 @@ function find_idx($list, $name) {
     $n = norm($name);
     foreach ($list as $i => $v) if (norm((string)$v) === $n) return $i;
     foreach ($list as $i => $v) if (strpos(norm((string)$v), $n) === 0) return $i;
+    foreach ($list as $i => $v) if ($n !== '' && strpos(norm((string)$v), $n) !== false) return $i;
     return -1;
 }
 
@@ -155,14 +156,14 @@ function play($di, $si) {
     return (($r['Result'] ?? '') === 'OK') ? 'OK ' . amp_name($s[$si]) : 'ERR ' . preg_replace('/\s+/', '_', $r['Result'] ?? 'play_failed');
 }
 
-if (isset($_GET['dirs'])) {
+if (isset($_GET['play'])) {                                    // first: it also has "st"
+    echo play((int)($_GET['dir'] ?? 0), (int)($_GET['st'] ?? 0));
+} elseif (isset($_GET['dirs'])) {
     page('d', dirs(), (int)($_GET['from'] ?? 0));
 } elseif (isset($_GET['st'])) {
     $d = dirs();
     $di = (int)($_GET['dir'] ?? 0);
     page('s', isset($d[$di]) ? stations($d[$di]) : [], (int)($_GET['from'] ?? 0));
-} elseif (isset($_GET['play'])) {
-    echo play((int)($_GET['dir'] ?? 0), (int)($_GET['st'] ?? 0));
 } else {
     echo 'ERR usage';
 }
