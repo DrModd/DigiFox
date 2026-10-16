@@ -34,6 +34,7 @@
 #   radio dirs <с>            -> @RLIST d <всего> <с>\t<раздел>...   (веб-радио APlayer: 2 строки по 6)
 #   radio st <раздел> <с>     -> @RLIST s <всего> <с>\t<станция>...
 #   radio play <раздел> <ст>  -> @BUSY radio, затем @OK radio <станция> | @ERR radio <причина>
+#   radio fav                 -> @OK radio fav  (играющая станция -> раздел !Favorites APlayer)
 #   ping              -> @PONG
 #   track             -> @TRACK <исполнитель>\t<название>  (пусто — нет трека)
 #   avol <pos> <max> <mute> <db> <power>
@@ -159,6 +160,9 @@ do_cmd() {
                     echo "@BUSY radio"
                     r=$($WGET "$URL/radio.php?play=1&dir=${n3:-0}&st=${n4:-0}" 2>/dev/null | oneline)
                     case "$r" in "OK "*) ok radio "${r#OK }" ;; *) err radio "${r#ERR }" ;; esac ;;
+                fav)
+                    r=$($WGET "$URL/radio.php?fav=1" 2>/dev/null | oneline)
+                    case "$r" in OK*) ok radio fav ;; *) err radio "${r#ERR }" ;; esac ;;
                 *) err radio bad_arg ;;
             esac ;;
         rate) echo "@RATE $(rate_now)" ;;
