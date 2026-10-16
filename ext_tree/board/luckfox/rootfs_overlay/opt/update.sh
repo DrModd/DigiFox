@@ -117,6 +117,9 @@ for s in /etc/init.d/S95*; do [ -x "$s" ] && "$s" stop >/dev/null 2>&1; done
 cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 
 # ---- файлы ----
+# метка «обновление не закончено»: если Фокс перезагрузится посреди записи файлов,
+# при следующей загрузке S98digifox-guard сам запустит переустановку (--force)
+mkdir -p /etc/digifox && echo "$NEW_BUILD" > /etc/digifox/update-pending && sync
 log "Обновляю файлы системы..."
 # rsync и его библиотеки берём из нового образа (загрузчик и библиотеки образа),
 # а не из системы: если прошлое обновление прервалось, системные библиотеки
@@ -197,6 +200,7 @@ if [ -f "$DTB" ]; then
 fi
 sync
 
+rm -f /etc/digifox/update-pending; sync
 log "Готово: $CUR_BUILD -> $NEW_BUILD"
 log "Перезагрузка через 5 секунд..."
 cleanup

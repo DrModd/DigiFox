@@ -75,6 +75,18 @@ start() {
         # кормит каждые 5 с; не кормит 30 с — аппаратный сброс
         watchdog -T 30 -t 5 /dev/watchdog && log "hardware watchdog on (30 s)"
     fi
+    if [ -f /etc/digifox/update-pending ]; then
+        # прошлое обновление прервалось посреди записи файлов (перезагрузка,
+        # питание) — часть системы может быть недописана: переустановить
+        log "previous update ($(cat /etc/digifox/update-pending)) was interrupted: reinstalling"
+        (
+            for i in $(seq 1 30); do                  # ждать сеть до ~30 мин
+                sleep 60
+                /opt/update.sh --force >/dev/null 2>&1
+                [ -f /etc/digifox/update-pending ] || break
+            done
+        ) </dev/null >/dev/null 2>&1 &
+    fi
     if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then return; fi
     guard_loop </dev/null >/dev/null 2>&1 &
     echo $! > $PIDFILE
