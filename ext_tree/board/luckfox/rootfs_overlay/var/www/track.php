@@ -55,8 +55,26 @@ function aplayer_track() {
     $r = @json_decode((string)@file_get_contents('http://127.0.0.1:7778/?GetRadio', false, $ctx), true);
     $now = trim((string)(is_array($r) && isset($r['RadioTitle']) ? $r['RadioTitle'] : ($j['RadioTitle'] ?? '')));
     if ($station === '' && $now === '') return null;
+    aplayer_remember((int)($j['Album'] ?? -1), (string)($j['PlayingName'] ?? ''));
     return ['source' => 'aplayer', 'artist' => $station, 'title' => $now !== '' ? $now : $station,
             'album' => '', 'cover' => '', 'dur' => 0, 'pos' => 0, 'play' => true, 'radio' => true];
+}
+
+// запомнить станцию, выбранную где угодно (страница APlayer, приложение) — для radio-resume;
+// пишется на флеш только при смене станции
+function aplayer_remember($album, $name) {
+    $name = preg_replace('/\.rad$/i', '', trim($name));
+    if ($album < 0 || $name === '') return;
+    $f = '/etc/digifox/radio_last';
+    $old = @file($f, FILE_IGNORE_NEW_LINES);
+    if ($old && ($old[1] ?? '') === $name) return;
+    $ctx = stream_context_create(['http' => ['timeout' => 2]]);
+    $al = @json_decode((string)@file_get_contents('http://127.0.0.1:7778/?GetAlbums', false, $ctx), true);
+    $sec = $al['Albums'][$album] ?? '';
+    $sec = trim(preg_replace('/\s*\[[^\]]*\]\s*$/', '', (string)$sec));
+    if ($sec === '') return;
+    @mkdir('/etc/digifox', 0755, true);
+    @file_put_contents("$f.tmp", "$sec\n$name\n") && @rename("$f.tmp", $f);
 }
 
 function current_track($np_file) {

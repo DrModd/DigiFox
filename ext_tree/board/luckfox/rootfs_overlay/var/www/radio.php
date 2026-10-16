@@ -6,6 +6,7 @@
 //   GET ?play&dir=D&st=S      -> "OK <name>" | "ERR <reason>"      switch to APlayer and play it
 //   GET ?fav                  -> "OK" | "ERR <reason>"             playing station -> !Favorites
 //   GET ?unfav                -> "OK" | "ERR <reason>"             playing station out of !Favorites
+//   GET ?resume               -> "OK ..." | "ERR <reason>"         play the last station (after APlayer starts)
 //
 // Lists come from /usr/aplayer/Radio (folders = sections, *.rad = stations), RADIO_PAGE
 // names per answer, transliterated to ASCII and shortened for the amp screen. To play,
@@ -124,16 +125,23 @@ function find_idx($list, $name) {
     return -1;
 }
 
+const RADIO_LAST = '/etc/digifox/radio_last';           // "раздел\nстанция" — что играло последним
+
 function play($di, $si) {
     $d = dirs();
     if (!isset($d[$di])) return 'ERR no_section';
     $s = stations($d[$di]);
     if (!isset($s[$si])) return 'ERR no_station';
+    @touch('/tmp/radio_play_req');                         // radio-resume: выбор уже сделан
+    return play_name($d[$di], $s[$si], true);
+}
 
+// включить станцию по названиям раздела и станции (индексы APlayer ищутся заново)
+function play_name($section, $station, $switch) {
     // APlayer must be the active player (its web API runs only then)
     $st = @json_decode(@file_get_contents('/tmp/system_status.json'), true);
     $usb = file_exists('/etc/usb_to_i2s.state');
-    if ($usb || ($st['active_service'] ?? '') !== 'aplayer') {
+    if ($switch && ($usb || ($st['active_service'] ?? '') !== 'aplayer')) {
         $post = function ($url, $data) {
             $ctx = stream_context_create(['http' => ['method' => 'POST', 'timeout' => 60,
                 'header' => 'Content-Type: application/x-www-form-urlencoded', 'content' => $data]]);
@@ -151,19 +159,40 @@ function play($di, $si) {
 
     if (empty($state['RadioMode'])) { ap('RadioMode', 10); usleep(300000); }
     $al = ap('GetAlbums', 10);
-    $a  = find_idx($al['Albums'] ?? [], $d[$di]);
+    $a  = find_idx($al['Albums'] ?? [], $section);
     if ($a < 0) {                                              // list not in radio mode yet
         ap('RadioMode', 10); usleep(300000);
         $al = ap('GetAlbums', 10);
-        $a  = find_idx($al['Albums'] ?? [], $d[$di]);
+        $a  = find_idx($al['Albums'] ?? [], $section);
     }
     if ($a < 0) return 'ERR section_not_in_aplayer';
     $so = ap('GetSongs&album=' . $a, 10);
-    $k  = find_idx($so['Songs'] ?? [], $s[$si]);
+    $k  = find_idx($so['Songs'] ?? [], $station);
     if ($k < 0) return 'ERR station_not_in_aplayer';
     if (!empty($state['Playing'])) { ap('Stop', 5); usleep(200000); }
     $r = ap('Play&album=' . $a . '&song=' . $k, 15);
-    return (($r['Result'] ?? '') === 'OK') ? 'OK ' . amp_name($s[$si]) : 'ERR ' . preg_replace('/\s+/', '_', $r['Result'] ?? 'play_failed');
+    if (($r['Result'] ?? '') !== 'OK') return 'ERR ' . preg_replace('/\s+/', '_', $r['Result'] ?? 'play_failed');
+    radio_remember($section, $station);
+    return 'OK ' . amp_name($station);
+}
+
+function radio_remember($section, $station) {
+    $v = "$section\n$station\n";
+    if (@file_get_contents(RADIO_LAST) === $v) return;        // флеш — только при смене
+    @mkdir(dirname(RADIO_LAST), 0755, true);
+    @file_put_contents(RADIO_LAST . '.tmp', $v) && @rename(RADIO_LAST . '.tmp', RADIO_LAST);
+}
+
+// после запуска APlayer (S95aplayer): если сам ничего не играет и станцию только что
+// не выбрали с усилителя — включить последнюю
+function resume() {
+    $l = @file(RADIO_LAST, FILE_IGNORE_NEW_LINES);
+    if (!$l || count($l) < 2) return 'ERR nothing_saved';
+    $st = ap('State', 3);
+    if ($st === null) return 'ERR aplayer_not_running';
+    if (!empty($st['Playing'])) return 'OK already_playing';
+    if (@filemtime('/tmp/radio_play_req') > time() - 30) return 'OK chosen';
+    return play_name($l[0], $l[1], false);
 }
 
 function unfav() {                                             // playing station out of !Favorites
@@ -185,7 +214,9 @@ function unfav() {                                             // playing statio
     return 'OK';
 }
 
-if (isset($_GET['unfav'])) {
+if (isset($_GET['resume'])) {
+    echo resume();
+} elseif (isset($_GET['unfav'])) {
     echo unfav();
 } elseif (isset($_GET['fav'])) {                                     // playing station -> !Favorites
     $r = ap('Favor', 5);

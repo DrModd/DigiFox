@@ -6,6 +6,15 @@ start() {
     ln -s -f /var/log/aplayer.log /usr/aprenderer/aplayer.log
     printf "Starting APlayer: "
     cd /usr/aplayer; nice -n -30 ./aplayer > /dev/null 2>&1 && echo "OK" || echo "FAIL"
+    # последняя станция веб-радио: включить, если APlayer сам ничего не играет
+    # (radio.php?resume; ждём, пока поднимутся APlayer, веб-сервер и сеть)
+    (
+        for i in $(seq 1 12); do
+            sleep 5
+            r=$(wget -q -T 30 -O - "http://127.0.0.1/radio.php?resume=1" 2>/dev/null)
+            case "$r" in OK*|"ERR nothing_saved") break ;; esac
+        done
+    ) </dev/null >/dev/null 2>&1 &
     sleep 0.5
     if [ -f /tmp/mixer_control_cache ]; then
         MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
