@@ -85,12 +85,20 @@ function mb_lc($ch) {
     return $i === false ? $ch : $L[$i];
 }
 
+// &lines=N: N lines of RADIO_PAGE names each (the amp keeps a window of 12)
 function page($kind, $names, $from) {
     $total = count($names);
     $from  = max(0, min($from, $total));
-    $out   = "$kind $total $from";
-    foreach (array_slice($names, $from, RADIO_PAGE) as $n) $out .= "\t" . amp_name($n);
-    echo $out;
+    $lines = max(1, min(4, (int)($_GET['lines'] ?? 1)));
+    $out   = [];
+    for ($l = 0; $l < $lines; $l++) {
+        $f = $from + $l * RADIO_PAGE;
+        if ($l > 0 && $f >= $total) break;
+        $o = "$kind $total $f";
+        foreach (array_slice($names, $f, RADIO_PAGE) as $n) $o .= "\t" . amp_name($n);
+        $out[] = $o;
+    }
+    echo implode("\n", $out);
 }
 
 // ---- APlayer web API ----

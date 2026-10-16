@@ -31,7 +31,7 @@
 #   vol, mute         -> @ERR fixed_volume (DigiFox: громкость только в усилителе)
 #   st                полный статус (JSON)
 #   rate              текущая частота/формат
-#   radio dirs <с>            -> @RLIST d <всего> <с>\t<раздел>...   (веб-радио APlayer, по 6)
+#   radio dirs <с>            -> @RLIST d <всего> <с>\t<раздел>...   (веб-радио APlayer: 2 строки по 6)
 #   radio st <раздел> <с>     -> @RLIST s <всего> <с>\t<станция>...
 #   radio play <раздел> <ст>  -> @BUSY radio, затем @OK radio <станция> | @ERR radio <причина>
 #   ping              -> @PONG
@@ -151,8 +151,10 @@ do_cmd() {
         radio) # веб-радио APlayer для меню усилителя (radio.php)
             n3=$(echo "$3" | tr -cd 0-9); n4=$(echo "$4" | tr -cd 0-9)
             case "$arg" in
-                dirs) echo "@RLIST $(get "radio.php?dirs=1&from=${n3:-0}")" ;;
-                st)   echo "@RLIST $(get "radio.php?st=1&dir=${n3:-0}&from=${n4:-0}")" ;;
+                dirs) $WGET "$URL/radio.php?dirs=1&lines=2&from=${n3:-0}" 2>/dev/null |
+                          while IFS= read -r l || [ -n "$l" ]; do echo "@RLIST $l"; done ;;
+                st)   $WGET "$URL/radio.php?st=1&lines=2&dir=${n3:-0}&from=${n4:-0}" 2>/dev/null |
+                          while IFS= read -r l || [ -n "$l" ]; do echo "@RLIST $l"; done ;;
                 play)
                     echo "@BUSY radio"
                     r=$($WGET "$URL/radio.php?play=1&dir=${n3:-0}&st=${n4:-0}" 2>/dev/null | oneline)
