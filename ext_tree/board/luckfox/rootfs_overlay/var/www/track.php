@@ -50,7 +50,10 @@ function aplayer_track() {
     $station = trim((string)($j['PlayingName'] ?? ''));
     $station = preg_replace('/\.rad$/i', '', $station);
     $station = trim(preg_replace('/\s*\((?=[^)]*(kbps|aac|flac|mp3|ogg|\d+k\b))[^)]*\)/i', '', $station));
-    $now = trim((string)($j['RadioTitle'] ?? ''));
+    // что в эфире: ?GetRadio (APlayer обновляет название песни по этому запросу —
+    // так делает и его веб-страница раз в 10 с); в ?State оно может быть старым
+    $r = @json_decode((string)@file_get_contents('http://127.0.0.1:7778/?GetRadio', false, $ctx), true);
+    $now = trim((string)(is_array($r) && isset($r['RadioTitle']) ? $r['RadioTitle'] : ($j['RadioTitle'] ?? '')));
     if ($station === '' && $now === '') return null;
     return ['source' => 'aplayer', 'artist' => $station, 'title' => $now !== '' ? $now : $station,
             'album' => '', 'cover' => '', 'dur' => 0, 'pos' => 0, 'play' => true, 'radio' => true];
