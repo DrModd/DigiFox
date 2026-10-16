@@ -242,9 +242,9 @@ serve() {
                     fi
                     if [ -f /etc/usb_to_i2s.state ]; then u=on; else u=off; fi
                     [ "$u" != "$last_usb" ] && echo "@USB $u" && last_usb=$u
-                    # трек: при изменении /tmp/nowplaying, а MPD — опрос раз в ~2 с
+                    # трек: при изменении /tmp/nowplaying, а MPD и веб-радио — опрос раз в ~2 с
                     np=$(cat /tmp/nowplaying 2>/dev/null); k=$((k + 1))
-                    if [ "$np" != "$last_np" ] || { [ "$svc" = mpd ] && [ $k -ge 2 ]; } || [ $k -ge 10 ]; then
+                    if [ "$np" != "$last_np" ] || { { [ "$svc" = mpd ] || [ "$svc" = aplayer ]; } && [ $k -ge 2 ]; } || [ $k -ge 10 ]; then
                         k=0; last_np=$np
                         tr_=$(track_line)
                         [ "$tr_" != "$last_tr" ] && echo "@TRACK $tr_" && last_tr=$tr_ && j=99

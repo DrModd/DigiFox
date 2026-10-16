@@ -6,8 +6,8 @@
 //   GET ?prog=1  -> для усилителя: "позиция_с длительность_с 1|0" (пусто — нет трека)
 //   GET ?amp=1   -> одна строка для экрана усилителя: "исполнитель\tназвание" в однобайтовой
 //                   кодировке шрифта усилителя (ASCII + кириллица 0x80..0xBF), пусто — нет трека
-// Источники: /tmp/nowplaying и /tmp/np_prog (пишет pfmeta для Qobuz, Spotify, AirPlay) и MPD
-// (запрос здесь). Обложки и длительности, которых плеер не дал, ищутся в iTunes (pfmeta art).
+// Источники: /tmp/nowplaying и /tmp/np_prog (пишет pfmeta для Qobuz, Spotify, AirPlay), MPD и
+// веб-радио APlayer (запрос здесь: станция и что в эфире). Обложки и длительности, которых плеер не дал, ищутся в iTunes (pfmeta art).
 // Положить на Фокс в /var/www/track.php.
 
 $np_file = '/tmp/nowplaying';
@@ -42,9 +42,24 @@ function mpd_track() {
             'play' => $state === 'play', 'radio' => $dur === 0];
 }
 
+// веб-радио APlayer: станция — как исполнитель, то, что сейчас в эфире (ICY) — как название
+function aplayer_track() {
+    $ctx = stream_context_create(['http' => ['timeout' => 1.5]]);
+    $j = @json_decode((string)@file_get_contents('http://127.0.0.1:7778/?State', false, $ctx), true);
+    if (!is_array($j) || empty($j['Playing'])) return null;
+    $station = trim((string)($j['PlayingName'] ?? ''));
+    $station = preg_replace('/\.rad$/i', '', $station);
+    $station = trim(preg_replace('/\s*\((?=[^)]*(kbps|aac|flac|mp3|ogg|\d+k\b))[^)]*\)/i', '', $station));
+    $now = trim((string)($j['RadioTitle'] ?? ''));
+    if ($station === '' && $now === '') return null;
+    return ['source' => 'aplayer', 'artist' => $station, 'title' => $now !== '' ? $now : $station,
+            'album' => '', 'cover' => '', 'dur' => 0, 'pos' => 0, 'play' => true, 'radio' => true];
+}
+
 function current_track($np_file) {
     $svc = active_service();
     if ($svc === 'mpd') return mpd_track();
+    if ($svc === 'aplayer') return aplayer_track();
     $l = @file($np_file, FILE_IGNORE_NEW_LINES);
     if (!$l || count($l) < 3) return null;
     if ($svc !== '' && $l[0] !== $svc) return null;    // устаревшее: плеер уже другой
@@ -106,7 +121,8 @@ function fill_art(&$t) {
     }
     if (trim((string)@file_get_contents('/tmp/np_art.req')) === $key) return;   // уже ищется
     @file_put_contents('/tmp/np_art.req', $key);
-    $term = trim($t['artist'] . ' ' . $t['title']);
+    // веб-радио: «исполнитель» — это станция, а в названии уже «Исполнитель - Песня»
+    $term = ($t['source'] ?? '') === 'aplayer' ? $t['title'] : trim($t['artist'] . ' ' . $t['title']);
     $url = 'https://itunes.apple.com/search?media=music&entity=song&limit=1&term=' . rawurlencode($term);
     exec('/usr/bin/pfmeta art ' . escapeshellarg($key) . ' ' . escapeshellarg($url) . ' >/dev/null 2>&1 &');
 }
