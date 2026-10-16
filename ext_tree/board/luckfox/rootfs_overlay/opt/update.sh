@@ -137,6 +137,7 @@ sync_root() {
     --filter='protect /data/ethaddr.txt' \
     --filter='protect /var/www/radio.json' \
     --filter='protect /usr/aplayer/*.dat' \
+    --filter='protect /usr/aplayer/Radio/**' \
     --filter='protect /usr/aprenderer/*.dat' \
     "$NEW/" /
 }
