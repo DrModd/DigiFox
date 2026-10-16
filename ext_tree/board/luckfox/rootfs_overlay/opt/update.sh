@@ -129,8 +129,11 @@ log "Обновляю файлы системы..."
 RSYNC="$NEW/lib/ld-linux-armhf.so.3 --library-path $NEW/lib:$NEW/usr/lib $NEW/usr/bin/rsync"
 $RSYNC --version >/dev/null 2>&1 || RSYNC=rsync
 FSYNC=""; $RSYNC --help 2>/dev/null | grep -q -- '--fsync' && FSYNC=--fsync
+# станции веб-радио правили на странице «Радиостанции» — список целиком пользовательский:
+# не добавлять обратно удалённые станции из образа и не трогать папку вообще
+RADIO_EXCL=""; [ -f /etc/digifox/radio_edited ] && RADIO_EXCL="--exclude=/usr/aplayer/Radio/"
 sync_root() {
-    $RSYNC -ac $FSYNC --delete-before \
+    $RSYNC -ac $FSYNC --delete-before $RADIO_EXCL \
     --exclude=/dev --exclude=/proc --exclude=/sys --exclude=/tmp --exclude=/run \
     --exclude=/mnt --exclude=/media --exclude=/root --exclude=/var/run --exclude=/var/log \
     --filter='protect /etc/i2s.conf' \

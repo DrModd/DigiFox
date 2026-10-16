@@ -90,6 +90,7 @@
     <div class="sheet-box">
         <div class="cap">DIGIFOX v<?php echo htmlspecialchars(VERSION); ?></div>
         <a class="menu-item" href="amplifier.php" data-t="m_amp">Усилитель, будильник, таймер</a>
+        <a class="menu-item" href="radio_edit.php" data-t="m_radio">Радиостанции</a>
         <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
         <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>
         <a class="menu-item" href="backup.php" id="m-backup" data-t="m_backup">Сохранить настройки в файл</a>
