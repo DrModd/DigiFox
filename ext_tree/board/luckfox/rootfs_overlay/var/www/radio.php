@@ -5,6 +5,7 @@
 //   GET ?st&dir=D&from=F      -> "s <total> <from>\t<name>\t..."   stations of section D
 //   GET ?play&dir=D&st=S      -> "OK <name>" | "ERR <reason>"      switch to APlayer and play it
 //   GET ?fav                  -> "OK" | "ERR <reason>"             playing station -> !Favorites
+//   GET ?unfav                -> "OK" | "ERR <reason>"             playing station out of !Favorites
 //
 // Lists come from /usr/aplayer/Radio (folders = sections, *.rad = stations), RADIO_PAGE
 // names per answer, transliterated to ASCII and shortened for the amp screen. To play,
@@ -165,7 +166,28 @@ function play($di, $si) {
     return (($r['Result'] ?? '') === 'OK') ? 'OK ' . amp_name($s[$si]) : 'ERR ' . preg_replace('/\s+/', '_', $r['Result'] ?? 'play_failed');
 }
 
-if (isset($_GET['fav'])) {                                     // playing station -> !Favorites
+function unfav() {                                             // playing station out of !Favorites
+    $st = ap('State', 3);
+    if ($st === null) return 'ERR aplayer_not_running';
+    $name = (string)($st['PlayingName'] ?? '');
+    if ($name === '') return 'ERR nothing_playing';
+    $al = ap('GetAlbums', 10);
+    $f = -1;
+    foreach ($al['Albums'] ?? [] as $i => $a) if (stripos(norm((string)$a), '!favorites') === 0) { $f = $i; break; }
+    if ($f < 0) return 'ERR no_favorites';
+    $k = find_idx(ap('GetSongs&album=' . $f, 10)['Songs'] ?? [], $name);
+    if ($k < 0) return 'ERR not_in_favorites';
+    $r = ap('DeleteStation&album=' . $f . '&song=' . $k, 10);
+    if ($r === null) return 'ERR delete_failed';
+    // APlayer leaves radio mode listing after a change; keep its lists in radio mode
+    $s2 = ap('State', 3);
+    if ($s2 !== null && empty($s2['RadioMode'])) ap('RadioMode', 10);
+    return 'OK';
+}
+
+if (isset($_GET['unfav'])) {
+    echo unfav();
+} elseif (isset($_GET['fav'])) {                                     // playing station -> !Favorites
     $r = ap('Favor', 5);
     echo $r === null ? 'ERR aplayer_not_running' : ((($r['Result'] ?? 'OK') === 'OK') ? 'OK' : 'ERR ' . preg_replace('/\s+/', '_', $r['Result']));
 } elseif (isset($_GET['play'])) {                                    // first: it also has "st"
