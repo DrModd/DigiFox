@@ -118,8 +118,16 @@ cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 
 # ---- файлы ----
 log "Обновляю файлы системы..."
+# rsync и его библиотеки берём из нового образа (загрузчик и библиотеки образа),
+# а не из системы: если прошлое обновление прервалось, системные библиотеки
+# (libcrypto) могут быть недописаны, и системный rsync даже не запустится.
+# --fsync: каждый файл записан на флеш до замены старого — при перезагрузке или
+# пропадании питания посреди обновления не остаётся пустых файлов (0 байт).
+RSYNC="$NEW/lib/ld-linux-armhf.so.3 --library-path $NEW/lib:$NEW/usr/lib $NEW/usr/bin/rsync"
+$RSYNC --version >/dev/null 2>&1 || RSYNC=rsync
+FSYNC=""; $RSYNC --help 2>/dev/null | grep -q -- '--fsync' && FSYNC=--fsync
 sync_root() {
-    rsync -ac --delete-before \
+    $RSYNC -ac $FSYNC --delete-before \
     --exclude=/dev --exclude=/proc --exclude=/sys --exclude=/tmp --exclude=/run \
     --exclude=/mnt --exclude=/media --exclude=/root --exclude=/var/run --exclude=/var/log \
     --filter='protect /etc/i2s.conf' \
