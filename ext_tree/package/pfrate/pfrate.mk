@@ -11,7 +11,7 @@ PFRATE_LICENSE = GPL-2.0+
 
 define PFRATE_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -Wall -Wextra -O2 -s \
-		-o $(@D)/pfrate $(@D)/pfrate.c
+		-o $(@D)/pfrate $(@D)/pfrate.c -lm
 endef
 
 define PFRATE_INSTALL_TARGET_CMDS

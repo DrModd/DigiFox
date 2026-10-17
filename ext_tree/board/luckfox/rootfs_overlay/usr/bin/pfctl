@@ -40,8 +40,9 @@
 #   avol <pos> <max> <mute> <db> <power>
 #                     от усилителя (STM32): его состояние. Сохраняется
 #                     в /tmp/amp_state для приложения (amp.php). Ответа нет.
-#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von>]
-#                     от усилителя: настройки -> /tmp/amp_cfg. Ответа нет.
+#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von> [<vu>]]
+#                     от усилителя: настройки -> /tmp/amp_cfg, vu -> /tmp/amp_vu
+#                     (стрелочные индикаторы: pfrate шлёт @LVL). Ответа нет.
 #   aver <версия> [экран]  от усилителя: версия -> /tmp/amp_ver, экран (st7789,
 #                     ssd1322, sh1122; нет — st7789) -> /tmp/amp_disp. Ответа нет.
 #   alog <текст>      от усилителя: строка в журнал событий (events.log). Ответа нет.
@@ -64,6 +65,7 @@
 #   @SRC <id>          сменился плеер (с веб-страницы, из приложения, с усилителя)
 #   @USB on|off        включён/выключен USBtoI2S
 #   @TRACK ...         сменился трек (Qobuz, Spotify, AirPlay, MPD — см. pfmeta, track.php).
+#   @LVL <L> <R> <pk>  уровни для стрелочных индикаторов (pfrate, только при /tmp/amp_vu = 1)
 #   @PROG <поз> <длит> <1|0>  позиция и длительность трека, с; 1 — играет (усилитель
 #                      досчитывает сам; раз в ~5 с и при смене трека). "@PROG" — нет данных.
 #                      Текст в однобайтовой кодировке шрифта усилителя:
@@ -138,8 +140,14 @@ do_cmd() {
         avol) # громкость усилителя от STM32 — молча сохранить для приложения
             echo "$2 $3 $4 $5 ${6:-1} $(date +%s)" > /tmp/amp_state.tmp && mv /tmp/amp_state.tmp /tmp/amp_state
             ;;
-        acfg) # настройки усилителя от STM32
-            echo "$2 $3 $4 $5 $6 $7 $8 $9" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg ;;
+        acfg) # настройки усилителя от STM32 (9-е — стрелочные индикаторы на экране)
+            echo "$2 $3 $4 $5 $6 $7 $8 $9" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg
+            vu=${10}
+            [ "$vu" = 1 ] || vu=0
+            if [ "$vu" != "$(cat /tmp/amp_vu 2>/dev/null)" ]; then
+                echo "$vu" > /tmp/amp_vu
+                /usr/bin/digifox-srcmode apply >/dev/null 2>&1
+            fi ;;
         aver) echo "$2" > /tmp/amp_ver; echo "${3:-st7789}" > /tmp/amp_disp ;;   # версия и экран усилителя
         alog) # строка от усилителя в журнал событий (причина выключения, перезапуск МК)
             shift

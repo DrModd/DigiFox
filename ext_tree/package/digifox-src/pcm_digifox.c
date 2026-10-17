@@ -37,6 +37,7 @@
 #include <alsa/pcm_external.h>
 #include <soxr.h>
 #include "dsd2pcm.h"
+#include "dfx_level.h"
 
 #define OUT_RATE    192000
 #define CH          2
@@ -77,6 +78,7 @@ typedef struct {
     snd_pcm_ioplug_t io;
     char        *slave_name;
     snd_pcm_t   *slave;
+    dfx_lvl_t   *lvl;               /* levels for the amplifier's VU meters */
     int          slave_ready;       /* hw params set */
     snd_pcm_uframes_t s_period, s_buffer;
     int          quality;
@@ -491,9 +493,13 @@ static int flush(dfx_t *d)
         snd_pcm_uframes_t n = pending < (snd_pcm_uframes_t)av ? pending : (snd_pcm_uframes_t)av;
         if (!d->final || n < pending) n -= n % d->s_period;
         if (!n) { full = pending >= d->s_period || d->final; break; }
+        snd_pcm_sframes_t sdel = 0;                   /* what the I2S still has to play */
+        if (d->lvl && (snd_pcm_delay(d->slave, &sdel) < 0 || sdel < 0)) sdel = 0;
+        int64_t t_heard = dfx_now_ms() + (int64_t)sdel * 1000 / OUT_RATE;
         snd_pcm_sframes_t w = snd_pcm_writei(d->slave, d->st + d->st_pos * CH, n);
         if (w == -EAGAIN) { full = 1; break; }
         if (w < 0) { if (slave_recover(d, (int)w) < 0) { full = 1; break; } continue; }
+        dfx_lvl_s32(d->lvl, t_heard, d->st + d->st_pos * CH, (unsigned long)w, OUT_RATE);
         d->st_pos += w;
         d->writes++;
         d->last_write = now_s();
@@ -912,6 +918,7 @@ static int dfx_close(snd_pcm_ioplug_t *io)
         pthread_join(d->thr, NULL);
     }
     pthread_mutex_destroy(&d->lock);
+    if (d->lvl) munmap(d->lvl, sizeof(dfx_lvl_t));
     if (d->efd >= 0) close(d->efd);
     if (d->kfd >= 0) close(d->kfd);
     free_conv(d);
@@ -1109,6 +1116,7 @@ SND_PCM_PLUGIN_DEFINE_FUNC(digifox)
     d->slave_name = strdup(slave);
     d->quality = !strcmp(quality, "hq") ? Q_HQ : !strcmp(quality, "vhq") ? Q_VHQ : Q_AUTO;
     d->slave = NULL;                 /* opened on the first hw_params (setup_slave) */
+    d->lvl = dfx_lvl_map();          /* VU meters of the amplifier (optional) */
     {   /* the USB router needs a short I2S queue (see setup_slave) */
         char comm[32] = "";
         FILE *cf = fopen("/proc/self/comm", "r");

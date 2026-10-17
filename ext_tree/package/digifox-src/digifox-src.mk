@@ -20,6 +20,8 @@ define DIGIFOX_SRC_BUILD_CMDS
 		$(@D)/pcm_digifox.c $(@D)/dsd2pcm.c -lasound -lsoxr -lm -lpthread
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s \
 		-o $(@D)/raat_card.so $(@D)/raat_card.c -ldl
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s -Wall \
+		-o $(@D)/libasound_scope_digilvl.so $(@D)/scope_digilvl.c -lasound
 endef
 
 define DIGIFOX_SRC_INSTALL_TARGET_CMDS
@@ -27,6 +29,8 @@ define DIGIFOX_SRC_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/libasound_module_pcm_digifox.so \
 		$(TARGET_DIR)/usr/lib/alsa-lib/libasound_module_pcm_digifox.so
 	$(INSTALL) -D -m 0644 $(@D)/raat_card.so $(TARGET_DIR)/usr/lib/digifox/raat_card.so
+	$(INSTALL) -D -m 0755 $(@D)/libasound_scope_digilvl.so \
+		$(TARGET_DIR)/usr/lib/alsa-lib/libasound_scope_digilvl.so
 endef
 
 $(eval $(generic-package))

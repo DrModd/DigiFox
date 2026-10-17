@@ -40,6 +40,7 @@
 #define EVLOG_PREFIX     "usb: "
 #define EVLOG_PREFIX_ARG
 #include "evlog_async.h"
+#include "dfx_level.h"
 /* time.h not needed — status log uses frame counter instead of time() syscall */
 
 /* ── Device constants ─────────────────────────────────────────────── */
@@ -95,6 +96,10 @@ static snd_pcm_t *pcm_playback = NULL;
 static char uac_card_path[256] = "";
 static char uac_card_name[64]  = "";
 static int  is_current_dsd = 0;
+/* VU meters of the amplifier: levels of what goes to the I2S (PCM straight to
+ * the card only; through the "digifox" plugin it measures them itself) */
+static dfx_lvl_t *lvl = NULL;
+static int  lvl_on = 0;
 static snd_pcm_uframes_t playback_period = 1024;
 
 static void sighandler(int sig) { running = 0; }
@@ -279,6 +284,7 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
         return -1;
 
     /* I2S playback — DSD_U32_LE for DSD, S32_LE for PCM */
+    lvl_on = !is_dsd && strcmp(i2s_device(), I2S_CARD) == 0;
     if (setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
                   lrck_rate, i2s_format, I2S_CHANNELS, is_dsd) < 0) {
         close_pcms();
@@ -396,6 +402,7 @@ int main(void) {
 
     signal(SIGINT, sighandler);
     signal(SIGTERM, sighandler);
+    lvl = dfx_lvl_map();             /* VU meters (optional) */
 
     /* Real-time scheduling */
     {
@@ -616,11 +623,19 @@ int main(void) {
                 remaining -= to_copy;
 
                 if (accum_pos >= pb_period) {
+                    int64_t t_heard = 0;
+                    if (lvl_on && lvl) {                 /* when this period will be heard */
+                        snd_pcm_sframes_t dl = 0;
+                        if (snd_pcm_delay(pcm_playback, &dl) < 0 || dl < 0) dl = 0;
+                        t_heard = dfx_now_ms() + (int64_t)dl * 1000 / (current_rate ? current_rate : 48000);
+                    }
                     snd_pcm_sframes_t wr = snd_pcm_writei(pcm_playback, accum_buf, pb_period);
                     accum_pos = 0;
 
                     if (wr > 0) {
                         write_count++;
+                        if (lvl_on && lvl)
+                            dfx_lvl_s32(lvl, t_heard, (const int32_t *)accum_buf, (unsigned long)wr, current_rate);
                     } else if (wr == -EPIPE) {
                         /* XRUN recovery: re-enter pre-buffer phase */
                         xrun_count++;
