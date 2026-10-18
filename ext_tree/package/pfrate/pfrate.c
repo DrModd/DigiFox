@@ -14,7 +14,7 @@
  *
  *   @LVL <L> <R> <pk>       VU meters (only while the amplifier shows them,
  *                           /tmp/amp_vu = 1): needle positions 0..250 on the VU
- *                           scale (-20..+3 VU, 0 VU = -14 dBFS or /etc/digifox/vu_ref), pk bit 0/1 —
+ *                           scale (-20..+3 VU, 0 VU = -10 dBFS or /etc/digifox/vu_ref), pk bit 0/1 —
  *                           left/right peak at -1 dBFS or above; 25 times a second
  *                           while playing, "@LVL 0 0 0" once when it stops.
  *                           Levels come from dfx_level.h with the time each block
@@ -44,7 +44,7 @@
 #define IN_FILE       "/tmp/digifox_in"
 #define VU_FLAG       "/tmp/amp_vu"     /* "1": the amplifier shows VU meters (pfctl) */
 #define LVL_EVERY_MS  40
-#define LVL_REF_DBFS  (-14.0)           /* 0 VU by default: mastered music sits around 0 VU */
+#define LVL_REF_DBFS  (-10.0)           /* 0 VU by default: loud modern masters sit around 0 VU */
 #define VU_REF_FILE   "/etc/digifox/vu_ref"  /* other 0 VU, dBFS, e.g. "-18" */
 #define LVL_IDLE_MS   300               /* no new levels this long: silence */
 #ifndef PFRATE_GLOB
