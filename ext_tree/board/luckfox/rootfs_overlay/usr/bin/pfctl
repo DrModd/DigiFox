@@ -102,6 +102,12 @@ rate_now() {
     echo STOP
 }
 
+# IP-адрес Фокса для меню усилителя: первый IPv4 не на lo (eth0, wlan0...), "-" — нет сети
+net_ip() {
+    i=$(ip -4 -o addr show 2>/dev/null | awk '$2 != "lo" { sub(/\/.*/, "", $4); print $4; exit }')
+    echo "${i:--}"
+}
+
 # --- выполнение одной команды ---------------------------------------------
 do_cmd() {
     cmd=$(echo "$1" | tr 'A-Z' 'a-z'); arg=$(echo "$2" | tr 'A-Z' 'a-z')
@@ -174,6 +180,7 @@ do_cmd() {
                 *) err radio bad_arg ;;
             esac ;;
         rate) echo "@RATE $(rate_now)" ;;
+        net)  echo "@NET $(net_ip)" ;;
         track) echo "@TRACK $(track_line)" ;;
         "")   ;;
         *)    err "$cmd" unknown ;;
@@ -192,7 +199,7 @@ serve() {
     [ -x /usr/bin/pfmeta ] && /usr/bin/pfmeta airplay </dev/null >/dev/null 2>&1 &
     # фоновый наблюдатель: смена потока и запросы приложения к усилителю
     (
-        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""; j=0; last_pg="-"
+        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""; j=0; last_pg="-"; q=4; last_ip=""
         # DigiFox: pfrate reports a new stream within ~20 ms (C, no forks);
         # without it fall back to the shell poll below (~0.5 s)
         PFRATE=""; [ -x /usr/bin/pfrate ] && PFRATE=1
@@ -251,6 +258,12 @@ serve() {
                         echo "@SRC $svc"
                         [ -n "$last_svc" ] && rm -f /tmp/nowplaying   # трек прошлого плеера
                         last_svc=$svc
+                    fi
+                    # IP Фокса — раз в ~5 с, усилителю только при смене
+                    q=$((q + 1))
+                    if [ $q -ge 5 ]; then
+                        q=0; ip_=$(net_ip)
+                        [ "$ip_" != "$last_ip" ] && echo "@NET $ip_" && last_ip=$ip_
                     fi
                     if [ -f /etc/usb_to_i2s.state ]; then u=on; else u=off; fi
                     [ "$u" != "$last_usb" ] && echo "@USB $u" && last_usb=$u
