@@ -9,9 +9,12 @@ header('X-Accel-Buffering: no');
 $builtin = '/usr/share/digifox/amp-fw.bin';
 $bin = '/tmp/amp_fw.bin';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['builtin'] ?? '') === '1') {
+    $bdisp = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.disp'));
+    if ($bdisp === '') $bdisp = 'st7789';
     $disp = trim((string)@file_get_contents('/tmp/amp_disp'));
-    if ($disp !== '' && $disp !== 'st7789') {
-        echo "ОШИБКА: встроенная прошивка — для экрана ST7789, а у усилителя $disp. Прошейте файл .bin для своего экрана\n";
+    if ($disp === '') $disp = 'st7789';
+    if ($disp !== $bdisp) {
+        echo "ОШИБКА: встроенная прошивка — для экрана " . strtoupper($bdisp) . ", а у усилителя " . strtoupper($disp) . ". Прошейте файл .bin для своего экрана\n";
         exit;
     }
     if (!is_file($builtin) || !@copy($builtin, $bin)) {
