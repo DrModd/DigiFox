@@ -80,6 +80,7 @@
         <div class="cap" data-t="players">ПЛЕЕРЫ</div>
         <div class="grid" id="players"></div>
         <a class="hifi player-ui" id="player-ui" target="_blank" rel="noopener" hidden></a>
+        <a class="hifi player-ui" href="yandex.php">ЯНДЕКС МУЗЫКА</a>
     </section>
 
     <footer class="foot" id="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>
@@ -90,6 +91,7 @@
     <div class="sheet-box">
         <div class="cap">DIGIFOX v<?php echo htmlspecialchars(VERSION); ?></div>
         <a class="menu-item" href="amplifier.php" data-t="m_amp">Усилитель, будильник, таймер</a>
+        <a class="menu-item" href="yandex.php">Яндекс Музыка</a>
         <a class="menu-item" href="radio_edit.php" data-t="m_radio">Радиостанции</a>
         <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
         <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>

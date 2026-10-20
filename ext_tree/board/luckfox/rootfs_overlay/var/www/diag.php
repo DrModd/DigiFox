@@ -94,7 +94,8 @@ $logs = [];
 foreach ([['Ядро (dmesg)', $dmesg],
           ['События звука (/var/lib/digifox/events.log)', trim(tail_file('/var/lib/digifox/events.log', 40) . "\n" . tail_file('/tmp/digifox_events.log', 40))],
           ['Пересчёт (digifox_src.log)', tail_file('/tmp/digifox_src.log', 30)],
-          ['Qobuz (qobuz-meta.log)', tail_file('/tmp/qobuz-meta.log', 20)]] as [$t, $x]) {
+          ['Qobuz (qobuz-meta.log)', tail_file('/tmp/qobuz-meta.log', 20)],
+          ['Яндекс Музыка (ymusicd.log)', tail_file('/tmp/ymusicd.log', 20)]] as [$t, $x]) {
     if ($x !== '') $logs[] = ['title' => $t, 'text' => $x];
 }
 
