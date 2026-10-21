@@ -27,7 +27,13 @@ function out($a) {
     echo json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
-function fail($m) { out(['ok' => false, 'msg' => $m]); }
+function fail($m) {
+    if (defined('AMP_TXT')) {                         // меню усилителя: текстом
+        if (isset($GLOBALS['amp_list'])) echo $GLOBALS['amp_list'] . "\n";   // пустой список вместо вечного LOADING
+        echo 'ERR ' . $m . "\n"; exit;
+    }
+    out(['ok' => false, 'msg' => $m]);
+}
 
 // ---------------- ymusicd / API ----------------
 function ym_raw($path, $post = null, $ctype = 'application/x-www-form-urlencoded', $timeout = 25) {
@@ -235,6 +241,132 @@ function queue($list, $start, $append, $wave = '') {
     }
 }
 
+// треки плейлиста: [ответ API, треки]
+function playlist_tracks($uid, $kind) {
+    $r = res("/users/$uid/playlists/$kind");
+    $t = []; $miss = [];
+    foreach ((array)($r['tracks'] ?? []) as $it) {
+        if (isset($it['track'])) { $x = tr($it['track']); if ($x) $t[] = $x; }
+        elseif (isset($it['id'])) $miss[] = $it['id'] . (!empty($it['albumId']) ? ':' . $it['albumId'] : '');
+    }
+    if ($miss) $t = array_merge($t, tracks_by_ids(array_slice($miss, 0, 1000)));
+    return [$r, $t];
+}
+
+// «Моя волна» или станция: новая сессия rotor и первая партия треков в MPD
+function ym_wave($seed) {
+    if (!preg_match('/^[\w.:\-]{3,120}$/u', $seed)) fail('bad seed');
+    $r = res('/rotor/session/new', ['seeds' => [$seed], 'queue' => [], 'includeTracksInResponse' => true], true);
+    $sid = (string)($r['radioSessionId'] ?? '');
+    $batch = (string)($r['batchId'] ?? '');
+    $list = [];
+    foreach ((array)($r['sequence'] ?? []) as $it) { $x = tr($it['track'] ?? null); if ($x) $list[] = $x; }
+    if ($sid === '' || !$list) fail('Волна не запустилась (нужна подписка Плюс?)');
+    api("/rotor/session/" . rawurlencode($sid) . "/feedback",
+        ['event' => ['type' => 'radioStarted', 'timestamp' => gmdate('Y-m-d\TH:i:s.000\Z')], 'batchId' => $batch], true);
+    $wave = '&w=' . rawurlencode($sid) . '&b=' . rawurlencode($batch) . '&s=' . rawurlencode($seed);
+    return queue($list, 0, false, $wave);
+}
+
+// ---------------- меню усилителя (pfctl "ym …") ----------------
+// Как веб-радио: разделы -> пункты, имена ASCII (транслит), по 6 в строке.
+//   ?amp=dirs&from=N&lines=2        -> "d <всего> <с>\t<имя>..."
+//   ?amp=st&dir=D&from=N&lines=2    -> "s <всего> <с>\t<имя>..."
+//   ?amp=play&dir=D&idx=I           -> "OK <что>" | "ERR <почему>"
+// Разделы: 0 — «Моя волна» и станции, 1 — «Мне нравится», 2 — мои плейлисты, 3 — «Для вас».
+// Списки кэшируются в /tmp/ymusic (номера пунктов должны совпадать между запросами);
+// заново — при открытии списка с начала (from=0), если кэшу больше минуты.
+const YM_AMP_DIRS = ['MY WAVE & STATIONS', 'LIKED TRACKS', 'MY PLAYLISTS', 'FOR YOU'];
+
+function amp_cache($name, $fresh, $make) {
+    $f = YM_TMP . "/amp_$name.json";
+    $c = @json_decode((string)@file_get_contents($f), true);
+    if (is_array($c) && (!$fresh || time() - (int)@filemtime($f) < 60)) return $c;
+    $c = $make();
+    @mkdir(YM_TMP, 0755, true);
+    @file_put_contents($f, json_encode($c, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    return $c;
+}
+function amp_home($fresh) {
+    return amp_cache('home', $fresh, function () {
+        $uid = uid();
+        $h = ['stations' => [], 'playlists' => [], 'personal' => []];
+        foreach ((array)res("/users/$uid/playlists/list") as $p) $h['playlists'][] = pl($p);
+        $l = api("/landing3?blocks=personalplaylists");
+        foreach ((array)($l['result']['blocks'][0]['entities'] ?? []) as $e) {
+            $p = $e['data']['data'] ?? null;
+            if (is_array($p)) $h['personal'][] = pl($p);
+        }
+        $d = api('/rotor/stations/dashboard');
+        foreach ((array)($d['result']['stations'] ?? []) as $x) {
+            $st = $x['station'] ?? [];
+            if (isset($st['id']['type'], $st['id']['tag']))
+                $h['stations'][] = ['name' => (string)($st['name'] ?? ''), 'seed' => $st['id']['type'] . ':' . $st['id']['tag']];
+        }
+        return $h;
+    });
+}
+function amp_likes($fresh) {
+    return amp_cache('likes', $fresh, function () {
+        $uid = uid();
+        $lib = res("/users/$uid/likes/tracks");
+        $ids = [];
+        foreach ((array)($lib['library']['tracks'] ?? []) as $t)
+            $ids[] = $t['id'] . (!empty($t['albumId']) ? ':' . $t['albumId'] : '');
+        return tracks_by_ids(array_slice($ids, 0, 1000));
+    });
+}
+// имена пунктов раздела
+function amp_items($dir, $fresh) {
+    if ($dir === 1) return array_map(function ($t) { return trim($t['artist'] . ' - ' . $t['title'], ' -'); }, amp_likes($fresh));
+    $h = amp_home($fresh);
+    if ($dir === 0) return array_merge(['My Wave'], array_map(function ($s) { return $s['name']; }, $h['stations']));
+    $k = $dir === 2 ? 'playlists' : 'personal';
+    return array_map(function ($p) { return $p['title']; }, $h[$k] ?? []);
+}
+
+if (isset($_GET['amp'])) {
+    define('AMP_TXT', 1);
+    @session_write_close();
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: no-store');
+    require_once 'radio_lib.php';                      // amp_name(), page()
+    $a = (string)$_GET['amp'];
+    $from = max(0, (int)($_GET['from'] ?? 0));
+    $dir = (int)($_GET['dir'] ?? 0);
+    if ($a === 'dirs') { page('d', has_token() ? YM_AMP_DIRS : ['Log in: web or app'], $from); exit; }
+    if ($a === 'st') $amp_list = "s 0 $from";
+    if (!has_token()) fail('no token');
+    if ($a === 'st') {
+        if ($dir < 0 || $dir > 3) fail('bad dir');
+        page('s', amp_items($dir, $from === 0), $from);
+        exit;
+    }
+    if ($a === 'play') {
+        $i = (int)($_GET['idx'] ?? 0);
+        if ($dir === 0) {
+            $h = amp_home(false);
+            $seed = $i === 0 ? 'user:onyourwave' : ($h['stations'][$i - 1]['seed'] ?? '');
+            if ($seed === '') fail('no station');
+            ym_wave($seed);
+            echo "OK wave\n"; exit;
+        }
+        if ($dir === 1) {
+            $l = amp_likes(false);
+            if (!isset($l[$i])) fail('no track');
+            queue($l, $i, false);
+            echo "OK likes\n"; exit;
+        }
+        $h = amp_home(false);
+        $p = $h[$dir === 2 ? 'playlists' : 'personal'][$i] ?? null;
+        if (!$p) fail('no playlist');
+        list(, $t) = playlist_tracks(preg_replace('/[^\w.-]/', '', $p['uid']), preg_replace('/\D/', '', $p['kind']));
+        queue($t, 0, false);
+        echo "OK playlist\n"; exit;
+    }
+    fail('bad amp');
+}
+
 // ---------------- API ----------------
 if (isset($_GET['api'])) {
     @session_write_close();
@@ -320,13 +452,7 @@ if (isset($_GET['api'])) {
     if ($a === 'playlist') {
         $uid = preg_replace('/[^\w.-]/', '', (string)($_GET['uid'] ?? ''));
         $kind = preg_replace('/\D/', '', (string)($_GET['kind'] ?? ''));
-        $r = res("/users/$uid/playlists/$kind");
-        $t = []; $miss = [];
-        foreach ((array)($r['tracks'] ?? []) as $it) {
-            if (isset($it['track'])) { $x = tr($it['track']); if ($x) $t[] = $x; }
-            elseif (isset($it['id'])) $miss[] = $it['id'] . (!empty($it['albumId']) ? ':' . $it['albumId'] : '');
-        }
-        if ($miss) $t = array_merge($t, tracks_by_ids(array_slice($miss, 0, 1000)));
+        list($r, $t) = playlist_tracks($uid, $kind);
         $p = pl($r);
         out(['title' => $p['title'], 'sub' => $p['owner'], 'cover' => img(($r['cover']['uri'] ?? ($r['cover']['itemsUri'][0] ?? '')), '200x200'),
              'tracks' => $t]);
@@ -396,18 +522,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
     }
 
     if ($op === 'wave') {
-        $seed = $P('seed') !== '' ? $P('seed') : 'user:onyourwave';
-        if (!preg_match('/^[\w.:\-]{3,120}$/u', $seed)) fail('bad seed');
-        $r = res('/rotor/session/new', ['seeds' => [$seed], 'queue' => [], 'includeTracksInResponse' => true], true);
-        $sid = (string)($r['radioSessionId'] ?? '');
-        $batch = (string)($r['batchId'] ?? '');
-        $list = [];
-        foreach ((array)($r['sequence'] ?? []) as $it) { $x = tr($it['track'] ?? null); if ($x) $list[] = $x; }
-        if ($sid === '' || !$list) fail('Волна не запустилась (нужна подписка Плюс?)');
-        api("/rotor/session/" . rawurlencode($sid) . "/feedback",
-            ['event' => ['type' => 'radioStarted', 'timestamp' => gmdate('Y-m-d\TH:i:s.000\Z')], 'batchId' => $batch], true);
-        $wave = '&w=' . rawurlencode($sid) . '&b=' . rawurlencode($batch) . '&s=' . rawurlencode($seed);
-        $n = queue($list, 0, false, $wave);
+        ym_wave($P('seed') !== '' ? $P('seed') : 'user:onyourwave');
         out(['ok' => true, 'msg' => 'Волна запущена']);
     }
 

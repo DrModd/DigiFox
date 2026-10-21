@@ -179,6 +179,19 @@ do_cmd() {
                     case "$r" in OK*) ok radio "$arg" ;; *) err radio "${r#ERR }" ;; esac ;;
                 *) err radio bad_arg ;;
             esac ;;
+        ym) # Яндекс Музыка для меню усилителя (yandex.php?amp=…): тот же формат @RLIST, что у радио
+            n3=$(echo "$3" | tr -cd 0-9); n4=$(echo "$4" | tr -cd 0-9)
+            case "$arg" in
+                dirs) $WGET "$URL/yandex.php?amp=dirs&lines=2&from=${n3:-0}" 2>/dev/null |
+                          while IFS= read -r l || [ -n "$l" ]; do case "$l" in [ds]\ *) echo "@RLIST $l" ;; esac; done ;;
+                st)   $WGET "$URL/yandex.php?amp=st&lines=2&dir=${n3:-0}&from=${n4:-0}" 2>/dev/null |
+                          while IFS= read -r l || [ -n "$l" ]; do case "$l" in [ds]\ *) echo "@RLIST $l" ;; esac; done ;;
+                play)
+                    echo "@BUSY ym"
+                    r=$($WGET "$URL/yandex.php?amp=play&dir=${n3:-0}&idx=${n4:-0}" 2>/dev/null | oneline)
+                    case "$r" in "OK "*) ok ym "${r#OK }" ;; *) err ym "${r#ERR }" ;; esac ;;
+                *) err ym bad_arg ;;
+            esac ;;
         rate) echo "@RATE $(rate_now)" ;;
         net)  echo "@NET $(net_ip)" ;;
         track) echo "@TRACK $(track_line)" ;;
