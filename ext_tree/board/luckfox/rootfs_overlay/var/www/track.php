@@ -17,6 +17,12 @@ function active_service() {
     return is_array($j) && isset($j['active_service']) ? $j['active_service'] : '';
 }
 
+// Яндекс Музыка (ymusicd): обложку трека из очереди MPD кладут yandex.php и ymusicd в /tmp/ymusic/<id>
+function ym_cover($file) {
+    if (!preg_match('#^http://127\.0\.0\.1:\d+/track/(\d+)#', $file, $m)) return '';
+    return trim((string)@file_get_contents('/tmp/ymusic/' . $m[1]));
+}
+
 function mpd_track() {
     $s = @fsockopen('127.0.0.1', 6600, $en, $es, 1.0);
     if (!$s) return null;
@@ -38,7 +44,7 @@ function mpd_track() {
     if ($title === '' && isset($kv['file'])) $title = preg_replace('/\.[^.\/]*$/', '', basename($kv['file']));
     $dur = (int)round(1000 * (float)($kv['duration'] ?? ($kv['Time'] ?? 0)));
     return ['source' => 'mpd', 'artist' => $artist, 'title' => $title, 'album' => $kv['Album'] ?? '',
-            'cover' => '', 'dur' => $dur, 'pos' => (int)round(1000 * (float)($kv['elapsed'] ?? 0)),
+            'cover' => ym_cover($kv['file'] ?? ''), 'dur' => $dur, 'pos' => (int)round(1000 * (float)($kv['elapsed'] ?? 0)),
             'play' => $state === 'play', 'radio' => $dur === 0];
 }
 

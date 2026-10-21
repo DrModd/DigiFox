@@ -18,4 +18,5 @@ menu "Custom packages"
 	source "../ext_tree/package/volume-encoder/Config.in"
 	source "../ext_tree/package/pfrate/Config.in"
 	source "../ext_tree/package/digifox-src/Config.in"
+	source "../ext_tree/package/ymusic/Config.in"
 endmenu
