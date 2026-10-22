@@ -99,7 +99,17 @@ static int  is_current_dsd = 0;
 /* VU meters of the amplifier: levels of what goes to the I2S (PCM straight to
  * the card only; through the "digifox" plugin it measures them itself) */
 static dfx_lvl_t *lvl = NULL;
-static int  lvl_on = 0;
+static int  lvl_on = 0;          /* levels for the amp's VU meters right now */
+static int  lvl_cfg = 0;         /* PCM straight to the I2S card: levels possible */
+
+/* the amp shows VU meters (pfctl keeps /tmp/amp_vu = 1): only then measure */
+static int amp_vu_on(void)
+{
+    char c = '0';
+    int fd = open("/tmp/amp_vu", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) { if (read(fd, &c, 1) != 1) c = '0'; close(fd); }
+    return c == '1';
+}
 static snd_pcm_uframes_t playback_period = 1024;
 
 static void sighandler(int sig) { running = 0; }
@@ -284,7 +294,8 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
         return -1;
 
     /* I2S playback — DSD_U32_LE for DSD, S32_LE for PCM */
-    lvl_on = !is_dsd && strcmp(i2s_device(), I2S_CARD) == 0;
+    lvl_cfg = !is_dsd && strcmp(i2s_device(), I2S_CARD) == 0;
+    lvl_on = lvl_cfg && amp_vu_on();
     if (setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
                   lrck_rate, i2s_format, I2S_CHANNELS, is_dsd) < 0) {
         close_pcms();
@@ -487,6 +498,7 @@ int main(void) {
             }
             spin_n = 0;
             spin_t = now_t;
+            lvl_on = lvl_cfg && amp_vu_on();          /* VU meters switched on/off on the amp */
         }
         /* a line a minute while playing: shows when and in what state it stopped */
         if (play_started && now_t - hb_t >= 60) {
