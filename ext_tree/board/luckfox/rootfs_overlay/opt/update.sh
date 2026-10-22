@@ -136,6 +136,7 @@ sync_root() {
     $RSYNC -ac $FSYNC --delete-before $RADIO_EXCL \
     --exclude=/dev --exclude=/proc --exclude=/sys --exclude=/tmp --exclude=/run \
     --exclude=/mnt --exclude=/media --exclude=/root --exclude=/var/run --exclude=/var/log \
+    --exclude=/etc/digifox-release \
     --filter='protect /etc/i2s.conf' \
     --filter='protect /etc/asound.conf' \
     --filter='protect /etc/output' \
@@ -164,6 +165,9 @@ sync
 echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
 log "Проверяю записанные файлы..."
 sync_root || fail "повторная проверка файлов не прошла — повторите обновление"
+# номер версии — последним, когда все файлы уже на месте: если обновление
+# прервётся, Фокс останется на старом номере и предложит обновиться снова
+cp "$NEW/etc/digifox-release" /etc/digifox-release.new && mv /etc/digifox-release.new /etc/digifox-release && sync
 
 # настройки I2S: файл конфигурации сохранён, S94ioi2s пришёл новый (PLL) — привести в соответствие
 [ -f "$WORK/i2s.conf" ] && cp "$WORK/i2s.conf" /etc/i2s.conf
