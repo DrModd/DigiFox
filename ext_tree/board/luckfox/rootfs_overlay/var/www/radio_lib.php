@@ -2,6 +2,8 @@
 // radio_lib.php — web radio (APlayer) helpers shared by radio.php (amp menu) and
 // radio_edit.php (station editor page). Stations live in /usr/aplayer/Radio:
 // folder = section, *.rad = station (file holds the stream URL), *.m3u = playlist of stations.
+require_once __DIR__ . '/amp_text.php';           // amp_encode(), amp_menu_cyr()
+
 const RADIO_DIR  = '/usr/aplayer/Radio';
 const RADIO_PAGE = 6;
 const NAME_MAX   = 24;
@@ -56,11 +58,17 @@ function amp_name($s) {
                 'ê'=>'e','à'=>'a','â'=>'a','ç'=>'c','ô'=>'o','î'=>'i','ñ'=>'n','ă'=>'a','â'=>'a',
                 'ș'=>'s','ş'=>'s','ț'=>'t','ţ'=>'t','Ș'=>'S','Ț'=>'T','å'=>'a','Å'=>'A','ø'=>'o','æ'=>'ae'];
     }
-    $s = strtr($s, $tr);
-    $s = preg_replace('/[^\x20-\x7E]/', '', $s);
     // bitrate/format notes are noise on a small screen: "(128kbps)", "(320 kbps AAC)", "- AAC HD 256k"
     $s = preg_replace('/\s*\((?=[^)]*(kbps|aac|flac|mp3|ogg|\d+k\b))[^)]*\)/i', '', $s);
     $s = preg_replace('/\s*-\s*(aac|mp3|flac|ogg)\b.*$/i', '', $s);
+    $s = trim(preg_replace('/\s+/u', ' ', $s));
+    if (amp_menu_cyr()) {                                      // amp 1.9+: Cyrillic in its own font encoding
+        $e = amp_encode($s, 64);
+        if ($e === '') $e = '?';
+        return strlen($e) > NAME_MAX ? rtrim(substr($e, 0, NAME_MAX - 1)) . '.' : $e;
+    }
+    $s = strtr($s, $tr);
+    $s = preg_replace('/[^\x20-\x7E]/', '', $s);
     $s = trim(preg_replace('/\s+/', ' ', $s));
     if ($s === '') $s = '?';
     return strlen($s) > NAME_MAX ? rtrim(substr($s, 0, NAME_MAX - 1)) . '.' : $s;
