@@ -70,10 +70,12 @@
 
     <section class="panel">
         <div class="cap" data-t="mode">РЕЖИМ</div>
-        <div class="row2">
+        <div class="row3">
             <button class="hifi" id="mode-net" data-t="net">СЕТЬ</button>
+            <button class="hifi" id="mode-dac" data-t="dac">USB-ЦАП</button>
             <button class="hifi" id="mode-usb">USB → I2S</button>
         </div>
+        <div class="note" id="mode-note"></div>
     </section>
 
     <section class="panel">

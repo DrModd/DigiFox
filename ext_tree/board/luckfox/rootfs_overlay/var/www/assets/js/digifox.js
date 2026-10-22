@@ -11,7 +11,8 @@
 
     var T = RU ? {
         source: 'ИСТОЧНИК', amp: 'УСИЛИТЕЛЬ DIGID D1', volume: 'ГРОМКОСТЬ УСИЛИТЕЛЯ', mode: 'РЕЖИМ',
-        players: 'ПЛЕЕРЫ', net: 'СЕТЬ', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
+        players: 'ПЛЕЕРЫ', net: 'СЕТЬ', dac: 'USB-ЦАП', dacOn: 'Вывод в USB-ЦАП…', dacNone: 'USB-ЦАП не подключён — подключите его к USB-порту Фокса (через OTG-переходник)',
+        dacNote: 'Сетевые плееры играют во внешний USB-ЦАП, усилитель молчит', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
         m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки I2S', m_update: 'Обновление прошивки', m_reboot: 'Перезагрузить Фокс',
         m_backup: 'Сохранить настройки в файл', m_restore: 'Восстановить настройки из файла', m_diag: 'Диагностика', m_radio: 'Радиостанции',
         askRestore: 'Восстановить настройки из файла «%s»? Фокс перезагрузится.', restoreFail: 'Не удалось восстановить: ',
@@ -33,7 +34,8 @@
         }
     } : {
         source: 'SOURCE', amp: 'DIGID D1 AMPLIFIER', volume: 'AMPLIFIER VOLUME', mode: 'MODE',
-        players: 'PLAYERS', net: 'NETWORK', power: 'POWER', cancel: 'CANCEL', close: 'Close',
+        players: 'PLAYERS', net: 'NETWORK', dac: 'USB DAC', dacOn: 'Output to the USB DAC…', dacNone: 'USB DAC not connected — plug it into the Fox USB port (OTG adapter)',
+        dacNote: 'Network players play to the external USB DAC, the amplifier is silent', power: 'POWER', cancel: 'CANCEL', close: 'Close',
         m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'I2S settings', m_update: 'Firmware update', m_reboot: 'Reboot the Fox',
         m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics', m_radio: 'Radio stations',
         askRestore: 'Restore settings from “%s”? The Fox will reboot.', restoreFail: 'Restore failed: ',
@@ -129,6 +131,8 @@
             S.error = null;
             S.service = st.active_service || '';
             S.usb = r[1] ? !!r[1].enabled : null;
+            S.dacOut = st.alsa_state === 'usb';         // сетевые плееры -> внешний USB-ЦАП
+            S.dacPresent = !!st.usb_dac;
             S.amp = r[2] && r[2].present ? r[2] : null;
             S.rate = formatRate(r[3]);
             var t = r[4];
@@ -196,7 +200,7 @@
         }
         renderProg();
         setText('rate', S.rate || ' ');
-        setText('mode-cap', S.usb === true ? 'USB' : S.usb === false ? T.net : '');
+        setText('mode-cap', S.usb === true ? 'USB' : S.usb === false ? (S.dacOut ? T.dac : T.net) : '');
 
         // status line
         var st = $('status');
@@ -240,9 +244,11 @@
         setText('vol-note', !c ? '' : !amp ? T.ampNone : !amp.power ? T.ampStandby : T.ampOn);
 
         // mode
-        $('mode-net').className = 'hifi' + (S.usb === false ? ' on' : '');
+        $('mode-net').className = 'hifi' + (S.usb === false && !S.dacOut ? ' on' : '');
+        $('mode-dac').className = 'hifi' + (S.usb === false && S.dacOut ? ' on' : '');
         $('mode-usb').className = 'hifi' + (S.usb === true ? ' on' : '');
-        $('mode-net').disabled = $('mode-usb').disabled = !idle;
+        $('mode-net').disabled = $('mode-dac').disabled = $('mode-usb').disabled = !idle;
+        setText('mode-note', S.usb === false && S.dacOut ? (S.dacPresent ? T.dacNote : T.dacNone) : '');
 
         // players
         var btns = $('players').children;
@@ -293,11 +299,30 @@
     }
 
     function setUsb(on) {
-        if (S.usb === on) return;
+        if (S.usb === on && !(S.dacOut && !on)) return;
         action(on ? T.usbOn : T.usbOff, function () {
-            return post('usb_to_i2s.php', { action: on ? 'enable' : 'disable' }, 60000).then(function (txt) {
+            var p = S.usb === on ? Promise.resolve('successfully')
+                                 : post('usb_to_i2s.php', { action: on ? 'enable' : 'disable' }, 60000);
+            return p.then(function (txt) {
                 if (txt.indexOf('successfully') < 0) throw new Error(txt.slice(0, 120));
+                // сеть — снова в усилитель (I2S), если был выбран USB-ЦАП
+                if (!on && S.dacOut) return setOutput('i2s');
             });
+        });
+    }
+
+    // выход сетевых плееров: 'usb' — внешний USB-ЦАП, 'i2s' — усилитель
+    function setOutput(card) {
+        return post('handle_alsa.php', { card: card }, 60000).then(function (txt) {
+            if (txt.indexOf('successfully') < 0) throw new Error(txt.slice(0, 120));
+        });
+    }
+
+    function setDac() {
+        if (S.usb === false && S.dacOut) return;
+        action(T.dacOn, function () {
+            var p = S.usb ? post('usb_to_i2s.php', { action: 'disable' }, 60000) : Promise.resolve();
+            return p.then(function () { return setOutput('usb'); });
         });
     }
 
@@ -422,6 +447,7 @@
 
         $('mode-net').addEventListener('click', function () { setUsb(false); });
         $('mode-usb').addEventListener('click', function () { setUsb(true); });
+        $('mode-dac').addEventListener('click', setDac);
         $('power-btn').addEventListener('click', function () {
             if (S.amp) ampPost('power', S.amp.power ? T.powerOff : T.powerOn);
         });
