@@ -383,9 +383,14 @@ if (isset($_GET['api'])) {
                 $r['plus'] = !empty($j['result']['plus']['hasPlus']);
                 @mkdir(YM_TMP, 0755, true);
                 @file_put_contents(YM_TMP . '/uid', json_encode(['t' => md5(trim((string)@file_get_contents(YM_TOKEN))), 'uid' => $acc['uid'] ?? '']));
+            } elseif ($j === null || ($j['error']['name'] ?? '') === 'ymusicd') {
+                // Яндекс не ответил (сеть, часы ещё не синхронизированы после загрузки) —
+                // токен цел, это не повод просить войти заново
+                $r['offline'] = true;
+                $r['msg'] = 'нет связи с Яндексом';
             } else {
                 $r['bad_token'] = true;
-                $r['msg'] = $j === null ? 'нет связи с Яндексом' : ($j['error']['message'] ?? ($j['error']['name'] ?? 'токен не принят'));
+                $r['msg'] = $j['error']['message'] ?? ($j['error']['name'] ?? 'токен не принят');
             }
         }
         out($r);
@@ -736,7 +741,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
             $('account').hidden = !r.token;
             $('browse').hidden = !logged;
             $('quality').value = r.quality || 'lossless';
-            $('who').textContent = r.token ? (r.bad_token ? 'Токен не принят: ' + (r.msg || '') : (r.login || '—') + (r.plus ? '' : ' · без Плюса')) : '—';
+            $('who').textContent = r.token ? (r.bad_token ? 'Токен не принят: ' + (r.msg || '') :
+                r.offline ? 'Нет связи с Яндексом — повторяю…' : (r.login || '—') + (r.plus ? '' : ' · без Плюса')) : '—';
+            if (r.offline) { setTimeout(loadStatus, 10000); return; }   // вход цел, ждём сеть / время
             if (logged && !cur) home();
         });
     }
