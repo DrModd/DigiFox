@@ -491,6 +491,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
         @mkdir(dirname(YM_TOKEN), 0755, true);
         if (@file_put_contents(YM_TOKEN, $v) === false) fail('Не удалось сохранить токен');
         @chmod(YM_TOKEN, 0600);
+        @exec('sync');                                 // сразу на флеш: питание могут выключить следом
         @unlink(YM_TMP . '/uid');
         $j = api('/account/status');
         if ($j === null) out(['ok' => true, 'msg' => 'Токен сохранён, но служба ymusicd не отвечает']);
@@ -511,6 +512,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['op'])) {
         if (!in_array($v, ['lossless', 'hq', 'nq'], true)) fail('bad quality');
         @mkdir(dirname(YM_QUAL), 0755, true);
         @file_put_contents(YM_QUAL, $v . "\n");
+        @exec('sync');
         out(['ok' => true, 'msg' => 'Качество сохранено — для следующих треков']);
     }
 
