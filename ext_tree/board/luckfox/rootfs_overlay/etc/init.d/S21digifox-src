@@ -1,7 +1,11 @@
 #!/bin/sh
 # DigiFox: /etc/asound.std по режиму пересчёта (digifox-srcmode)
 case "$1" in
-    start|restart|reload) /usr/bin/digifox-srcmode apply ;;
+    start|restart|reload)
+        # папка пользовательских настроек DigiFox: в образе её нет (иначе обновление
+        # прежним /opt/update.sh стирало бы её содержимое), создаётся здесь
+        mkdir -p /etc/digifox && chmod 0777 /etc/digifox
+        /usr/bin/digifox-srcmode apply ;;
     stop) ;;
 esac
 exit 0

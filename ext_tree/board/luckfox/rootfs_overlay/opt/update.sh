@@ -120,6 +120,8 @@ cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 # метка «обновление не закончено»: если Фокс перезагрузится посреди записи файлов,
 # при следующей загрузке S98digifox-guard сам запустит переустановку (--force)
 mkdir -p /etc/digifox && echo "$NEW_BUILD" > /etc/digifox/update-pending && sync
+# копия пользовательских настроек: что бы ни сделал rsync, вернуть их после
+cp -a /etc/digifox "$WORK/etc-digifox" 2>/dev/null
 log "Обновляю файлы системы..."
 # rsync и его библиотеки берём из нового образа (загрузчик и библиотеки образа),
 # а не из системы: если прошлое обновление прервалось, системные библиотеки
@@ -167,6 +169,14 @@ sync
 echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
 log "Проверяю записанные файлы..."
 sync_root || fail "повторная проверка файлов не прошла — повторите обновление"
+# пользовательские настройки — назад, если rsync что-то из них убрал
+if [ -d "$WORK/etc-digifox" ]; then
+    mkdir -p /etc/digifox && chmod 0777 /etc/digifox
+    for f in "$WORK/etc-digifox"/* "$WORK/etc-digifox"/.[!.]*; do
+        [ -e "$f" ] && [ ! -e "/etc/digifox/${f##*/}" ] && cp -a "$f" /etc/digifox/
+    done
+    sync
+fi
 # номер версии — последним, когда все файлы уже на месте: если обновление
 # прервётся, Фокс останется на старом номере и предложит обновиться снова
 cp "$NEW/etc/digifox-release" /etc/digifox-release.new && mv /etc/digifox-release.new /etc/digifox-release && sync

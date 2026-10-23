@@ -144,6 +144,8 @@ if [ -f "$QC" ]; then
     fi
 fi
 
-# DigiFox: alarm, time zone (written by the web UI, kept by /opt/update.sh)
-mkdir -p "$TARGET_DIR/etc/digifox"
-chmod 0777 "$TARGET_DIR/etc/digifox"
+# DigiFox: /etc/digifox (alarm, time zone, Yandex token... written at run time) must NOT
+# be in the image: updaters up to 1.0.91 rsync with only "protect /etc/digifox/", which
+# keeps the directory but deletes everything inside it whenever the image has that
+# directory too. S21digifox-src creates it at boot.
+rm -rf "$TARGET_DIR/etc/digifox"
