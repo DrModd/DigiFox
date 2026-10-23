@@ -100,6 +100,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' || (isset($_GET['action']) && $_GET['a
             if (file_put_contents($configFile, $configContent) === false) {
                 throw new Exception('Cannot write to config file');
             }
+            // DigiFox: apply now — restart APScream if it is the active player
+            if (file_exists('/etc/init.d/S95apscream')) {
+                shell_exec('/usr/bin/sudo /etc/init.d/S95apscream restart >/dev/null 2>&1 &');
+            }
 
             echo json_encode([
                 'success' => true,

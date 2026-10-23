@@ -26,7 +26,7 @@
         askUpdate: 'Проверить и установить обновление DigiFox с GitHub? Во время обновления звук прервётся, затем Фокс перезагрузится.',
         askReboot: 'Перезагрузить Фокс?', rebooting: 'Перезагрузка Фокса…', back: 'Фокс снова на связи',
         updStart: 'Запуск обновления…\n', updLost: '\n[связь прервалась — если Фокс перезагружается, страница обновится сама]\n',
-        ui_aplayer: 'СТАНЦИИ ВЕБ-РАДИО ↗', ui_aprenderer: 'НАСТРОЙКИ UPnP-РЕНДЕРЕРА ↗',
+        ui_aplayer: 'СТАНЦИИ ВЕБ-РАДИО ↗', ui_aprenderer: 'НАСТРОЙКИ UPnP-РЕНДЕРЕРА ↗', ui_apscream: 'НАСТРОЙКИ APSCREAM ↗',
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
@@ -40,7 +40,7 @@
         m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics', m_radio: 'Radio stations',
         askRestore: 'Restore settings from “%s”? The Fox will reboot.', restoreFail: 'Restore failed: ',
         m_classic: 'Classic PureFox interface',
-        ui_aplayer: 'WEB RADIO STATIONS ↗', ui_aprenderer: 'UPnP RENDERER SETTINGS ↗',
+        ui_aplayer: 'WEB RADIO STATIONS ↗', ui_aprenderer: 'UPnP RENDERER SETTINGS ↗', ui_apscream: 'APSCREAM SETTINGS ↗',
         noPlayer: 'No player', on: 'On', standby: 'Standby',
         noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected (UART) — volume is set only by the amplifier',
         ampStandby: 'Amplifier is in standby',
@@ -257,11 +257,12 @@
             btns[i].className = 'hifi' + (S.usb === false && S.service === id ? ' on' : '');
             btns[i].disabled = !idle;
         }
-        // own web pages of APlayer (stations) and APrenderer — they work while the player runs
-        var ui = $('player-ui'), port = { aplayer: 7778, aprenderer: 7779 }[S.service];
+        // own web pages of APlayer (stations) and APrenderer — they work while the player runs;
+        // APScream: its settings page here (apscream_settings.php)
+        var ui = $('player-ui'), port = { aplayer: 7778, aprenderer: 7779, apscream: 'page' }[S.service];
         ui.hidden = !(S.usb === false && port);
         if (!ui.hidden) {
-            ui.href = 'http://' + location.hostname + ':' + port + '/';
+            ui.href = port === 'page' ? 'apscream_settings.php' : 'http://' + location.hostname + ':' + port + '/';
             ui.textContent = T['ui_' + S.service];
         }
     }

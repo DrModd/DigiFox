@@ -154,6 +154,7 @@ sync_root() {
     --filter='protect /usr/aplayer/*.dat' \
     --filter='protect /usr/aplayer/Radio/**' \
     --filter='protect /usr/aprenderer/*.dat' \
+    --filter='protect /usr/apscream/config.txt' \
     "$NEW/" /
 }
 sync_root || fail "rsync завершился с ошибкой — система могла обновиться частично, повторите обновление"
