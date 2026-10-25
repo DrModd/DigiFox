@@ -12,6 +12,16 @@ start() {
     [ "$(cat /etc/digifox/srcmode 2>/dev/null)" = fox ] && [ -f /usr/lib/digifox/raat_card.so ] && \
         PRE=/usr/lib/digifox/raat_card.so
     LD_PRELOAD=$PRE /opt/RoonReady/raat_app /etc/raat.conf > /dev/null 2>&1 &
+    # DigiFox: транспорт hifiberry (MPRIS по D-Bus — кнопки плеера с пульта усилителя).
+    # Если raat_app с ним не поднялся (нет D-Bus и т. п.) — запустить без него, как раньше.
+    if grep -q '"transport"' /etc/raat.conf; then
+        sleep 3
+        if ! pidof raat_app >/dev/null; then
+            sed '/"transport"/,/},/d' /etc/raat.conf > /tmp/raat_plain.conf
+            echo "$(date '+%d.%m %H:%M:%S') roon: raat_app не стартовал с транспортом — без кнопок пульта" >> /tmp/digifox_events.log
+            LD_PRELOAD=$PRE /opt/RoonReady/raat_app /tmp/raat_plain.conf > /dev/null 2>&1 &
+        fi
+    fi
     sleep 0.5
     if [ -f /tmp/mixer_control_cache ]; then
         MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")

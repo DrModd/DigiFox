@@ -35,6 +35,8 @@
 #   radio st <раздел> <с>     -> @RLIST s <всего> <с>\t<станция>...
 #   radio play <раздел> <ст>  -> @BUSY radio, затем @OK radio <станция> | @ERR radio <причина>
 #   radio fav | unfav         -> @OK radio fav|unfav  (играющая станция -> / <- раздел !Favorites APlayer)
+#   ctl toggle|next|prev  -> @OK ctl <cmd> <плеер> | @ERR ctl <причина>  (кнопки плеера с пульта
+#                     усилителя: MPD/Яндекс, APlayer, Roon, Qobuz — player_ctl.php)
 #   ping              -> @PONG
 #   track             -> @TRACK <исполнитель>\t<название>  (пусто — нет трека)
 #   avol <pos> <max> <mute> <db> <power>
@@ -192,6 +194,15 @@ do_cmd() {
                     case "$r" in "OK "*) ok ym "${r#OK }" ;; *) err ym "${r#ERR }" ;; esac ;;
                 *) err ym bad_arg ;;
             esac ;;
+        ctl)  # кнопки плеера с пульта усилителя: toggle|next|prev (player_ctl.php)
+            case "$arg" in toggle|next|prev) ;; *) err ctl bad_arg; return ;; esac
+            # в фоне: продолжение радио в APlayer может занять несколько секунд,
+            # а громкость и прочие строки от усилителя ждать не должны
+            (
+                r=$($WGET "$URL/player_ctl.php?cmd=$arg" 2>/dev/null | oneline)
+                case "$r" in "OK "*) ok ctl "$arg ${r#OK }" ;; *) err ctl "${r#ERR }" ;; esac
+                echo "$(date '+%d.%m %H:%M:%S') ctl $arg: $r" >> /tmp/digifox_events.log
+            ) & ;;
         rate) echo "@RATE $(rate_now)" ;;
         net)  echo "@NET $(net_ip)" ;;
         track) echo "@TRACK $(track_line)" ;;

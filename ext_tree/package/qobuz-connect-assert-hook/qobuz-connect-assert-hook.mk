@@ -11,8 +11,8 @@ QOBUZ_CONNECT_ASSERT_HOOK_LICENSE = MIT
 
 define QOBUZ_CONNECT_ASSERT_HOOK_BUILD_CMDS
 	$(TARGET_CC) -shared -fPIC -o $(@D)/libassert_hook.so \
-		$(@D)/assert_hook.c \
-		$(TARGET_CFLAGS) -Wno-unused-result -ldl
+		$(@D)/assert_hook.c $(@D)/qbz_ctl.c \
+		$(TARGET_CFLAGS) -Wno-unused-result -ldl -lpthread
 endef
 
 define QOBUZ_CONNECT_ASSERT_HOOK_INSTALL_TARGET_CMDS
