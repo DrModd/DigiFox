@@ -14,7 +14,11 @@
 #   4. flash the kernel part of boot.img only if it changed, then put back
 #      the DTB of the current I2S mode (PLL / EXT 1024 / EXT 512)
 #   5. reboot
-# idblock, U-Boot and the U-Boot environment are never touched online:
+# With read-only rootfs + userdata (S00overlay) the image is written to the rootfs
+# itself (remounted rw, reached by a plain bind mount under the overlays), and at the
+# next boot S00overlay drops from the change layer everything but user files (keep.rules).
+# idblock and U-Boot are never touched online (the environment only once, by
+# /etc/init.d/S00overlay: ",-(userdata)" appended to mtdparts);
 # for those flash the full image with RV1106_Toolkit.
 
 REPO="DrModd/DigiFox"
@@ -30,6 +34,7 @@ fail() { echo "ОШИБКА: $*"; cleanup; exit 1; }
 
 cleanup() {
     grep -q " $NEW " /proc/mounts 2>/dev/null && umount "$NEW"
+    grep -q " $WORK/rom " /proc/mounts 2>/dev/null && umount "$WORK/rom"
     rm -rf "$WORK"
 }
 
@@ -111,6 +116,48 @@ log "Проверяю контрольные суммы..."
 mount -t squashfs -o loop,ro "$WORK/rootfs.squashfs" "$NEW" || fail "не смонтировать образ"
 [ -x "$NEW/usr/bin/pfctl" ] && [ -f "$NEW/etc/digifox-release" ] || fail "образ не похож на DigiFox"
 
+# ---- куда писать систему ----
+# Система только для чтения (S00overlay): /etc /usr ... — overlay поверх rootfs, изменения
+# на разделе userdata. Новая система пишется в сам rootfs: перемонтировать его на запись
+# и взять «чистым» через простой bind (без overlay-каталогов поверх).
+ROOTW=""
+if grep -q '^ov-etc /etc overlay ' /proc/mounts && grep -q ' /overlay ubifs ' /proc/mounts; then
+    log "Система только для чтения: пишу обновление в rootfs, настройки остаются на userdata"
+    mount -o remount,rw / || fail "rootfs не перемонтировался на запись"
+    mkdir -p "$WORK/rom" && mount -o bind / "$WORK/rom" || fail "не получился bind rootfs"
+    ROOTW="$WORK/rom"
+fi
+
+# пользовательские файлы, которые обновление не трогает: список из нового образа
+# (тот же читает S00overlay); в старых образах его не было — тот же список здесь
+RULES="$WORK/keep.rules"
+if [ -f "$NEW/usr/share/digifox/keep.rules" ]; then
+    cp "$NEW/usr/share/digifox/keep.rules" "$RULES"
+else
+    cat > "$RULES" <<'EOR'
+protect /etc/i2s.conf
+protect /etc/asound.conf
+protect /etc/output
+protect /etc/usb_to_i2s.state
+protect /etc/init.d/S95*
+protect /etc/shadow
+protect /etc/digifox/
+protect /etc/digifox/**
+protect /var/lib/digifox/
+protect /var/lib/digifox/**
+protect /etc/resolv.conf
+protect /etc/hostname
+protect /etc/hosts
+protect /etc/dropbear/dropbear_*_host_key
+protect /data/ethaddr.txt
+protect /var/www/radio.json
+protect /usr/aplayer/*.dat
+protect /usr/aplayer/Radio/**
+protect /usr/aprenderer/*.dat
+protect /usr/apscream/config.txt
+EOR
+fi
+
 # ---- остановить плееры, сохранить настройки I2S ----
 log "Останавливаю плееры..."
 for s in /etc/init.d/S95*; do [ -x "$s" ] && "$s" stop >/dev/null 2>&1; done
@@ -139,26 +186,9 @@ sync_root() {
     --exclude=/dev --exclude=/proc --exclude=/sys --exclude=/tmp --exclude=/run \
     --exclude=/mnt --exclude=/media --exclude=/root --exclude=/var/run --exclude=/var/log \
     --exclude=/etc/digifox-release \
-    --filter='protect /etc/i2s.conf' \
-    --filter='protect /etc/asound.conf' \
-    --filter='protect /etc/output' \
-    --filter='protect /etc/usb_to_i2s.state' \
-    --filter='protect /etc/init.d/S95*' \
-    --filter='protect /etc/shadow' \
-    --filter='protect /etc/digifox/' \
-    --filter='protect /etc/digifox/**' \
-    --filter='protect /var/lib/digifox/' \
-    --filter='protect /etc/resolv.conf' \
-    --filter='protect /etc/hostname' \
-    --filter='protect /etc/hosts' \
-    --filter='protect /etc/dropbear/dropbear_*_host_key' \
-    --filter='protect /data/ethaddr.txt' \
-    --filter='protect /var/www/radio.json' \
-    --filter='protect /usr/aplayer/*.dat' \
-    --filter='protect /usr/aplayer/Radio/**' \
-    --filter='protect /usr/aprenderer/*.dat' \
-    --filter='protect /usr/apscream/config.txt' \
-    "$NEW/" /
+    --exclude=/overlay \
+    --filter="merge $RULES" \
+    "$NEW/" "$ROOTW/"
 }
 sync_root || fail "rsync завершился с ошибкой — система могла обновиться частично, повторите обновление"
 sync
@@ -179,13 +209,14 @@ if [ -d "$WORK/etc-digifox" ]; then
 fi
 # номер версии — последним, когда все файлы уже на месте: если обновление
 # прервётся, Фокс останется на старом номере и предложит обновиться снова
-cp "$NEW/etc/digifox-release" /etc/digifox-release.new && mv /etc/digifox-release.new /etc/digifox-release && sync
+cp "$NEW/etc/digifox-release" "$ROOTW/etc/digifox-release.new" && \
+    mv "$ROOTW/etc/digifox-release.new" "$ROOTW/etc/digifox-release" && sync
 
 # настройки I2S: файл конфигурации сохранён, S94ioi2s пришёл новый (PLL) — привести в соответствие
 [ -f "$WORK/i2s.conf" ] && cp "$WORK/i2s.conf" /etc/i2s.conf
 MODE=$(sed -n 's/^MODE=//p' /etc/i2s.conf 2>/dev/null)
 MCLK=$(sed -n 's/^MCLK=//p' /etc/i2s.conf 2>/dev/null)
-[ "$MODE" = ext ] && sed -i 's/007c003c/007c001c/' /etc/init.d/S94ioi2s
+[ "$MODE" = ext ] && sed -i 's/007c003c/007c001c/' "$ROOTW/etc/init.d/S94ioi2s"
 
 umount "$NEW"
 sync
@@ -204,9 +235,9 @@ fi
 
 # ---- DTB текущего режима I2S ----
 case "$MODE:$MCLK" in
-    ext:512) DTB=/data/boot/512_ext.dtb ;;
-    ext:*)   DTB=/data/boot/1024_ext.dtb ;;
-    *)       DTB=/data/boot/1024_pll.dtb ;;
+    ext:512) DTB="$ROOTW/data/boot/512_ext.dtb" ;;
+    ext:*)   DTB="$ROOTW/data/boot/1024_ext.dtb" ;;
+    *)       DTB="$ROOTW/data/boot/1024_pll.dtb" ;;
 esac
 if [ -f "$DTB" ]; then
     n=$(wc -c < "$DTB")
@@ -219,6 +250,13 @@ if [ -f "$DTB" ]; then
 fi
 sync
 
+# слой изменений: при следующей загрузке оставить в нём только пользовательские файлы,
+# иначе старые копии системных файлов (их правили во время работы) закрыли бы новые
+if [ -n "$ROOTW" ]; then
+    touch /overlay/.update-cleanup
+    sync
+    umount "$WORK/rom" 2>/dev/null
+fi
 rm -f /etc/digifox/update-pending; sync
 log "Готово: $CUR_BUILD -> $NEW_BUILD"
 log "Перезагрузка через 5 секунд..."

@@ -1,0 +1,26 @@
+# DigiFox: пользовательские файлы, которые обновление не трогает (фильтры rsync, "merge").
+# Читают: /opt/update.sh (запись образа поверх системы) и /etc/init.d/S00overlay
+# (после обновления в слое изменений /overlay/upper остаётся только это — всё
+# остальное снова берётся из новой системы).
+protect /etc/i2s.conf
+protect /etc/asound.conf
+protect /etc/output
+protect /etc/usb_to_i2s.state
+protect /etc/init.d/S95*
+protect /etc/shadow
+protect /etc/digifox/
+protect /etc/digifox/**
+protect /var/lib/digifox/
+protect /var/lib/digifox/**
+protect /etc/resolv.conf
+protect /etc/hostname
+protect /etc/hosts
+protect /etc/dropbear/
+protect /etc/dropbear/dropbear_*_host_key
+protect /data/ethaddr.txt
+protect /var/www/radio.json
+protect /usr/aplayer/*.dat
+protect /usr/aplayer/Radio/
+protect /usr/aplayer/Radio/**
+protect /usr/aprenderer/*.dat
+protect /usr/apscream/config.txt

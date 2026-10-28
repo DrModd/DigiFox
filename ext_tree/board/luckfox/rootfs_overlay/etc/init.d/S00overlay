@@ -1,0 +1,182 @@
+#!/bin/sh
+#
+# DigiFox: система только для чтения, все изменения — на отдельном разделе userdata.
+#
+#   NAND:  ... boot | rootfs (UBI, система) | userdata (UBI, весь остаток NAND)
+#
+# rootfs монтируется только для чтения. Каталоги, в которые что-то пишется во время
+# работы (/etc /var /usr /opt /root /data), закрыты overlayfs: снизу — rootfs, сверху —
+# /overlay/upper/<каталог> на разделе userdata (UBIFS). Выключение питания не может
+# испортить систему: пишется только userdata, а UBIFS устойчива к обрывам записи.
+#
+# Если что-то не получилось (старая разметка без userdata, нет модуля overlay, не
+# смонтировалось), Фокс просто работает как раньше — rootfs на запись. Причина — в
+# /tmp/digifox_events.log и в /tmp/overlay.log.
+#
+# Разметку старых Фоксов (без userdata) этот же скрипт переводит сам (пока — только при
+# наличии /etc/digifox/userdata-enable): дописывает
+# ",-(userdata)" в mtdparts окружения U-Boot. rootfs при этом не двигается ни на байт —
+# раздел userdata занимает NAND после него, которую раньше никто не использовал.
+# Работает со следующей перезагрузки.
+#
+# После онлайн-обновления (/opt/update.sh пишет новую систему прямо в rootfs) из
+# слоя изменений удаляется всё, кроме пользовательских файлов (/usr/share/digifox/keep.rules),
+# — иначе старые копии системных файлов закрывали бы новые.
+#
+# Аварийный выход: touch /overlay/.disable (или /data/.overlay-disable) и перезагрузка —
+# работать по-старому, rootfs на запись.
+
+OLD_PARTS='spi-nand0:262144(env),262144@262144(idblock),524288(uboot),4194304(boot),125829120(rootfs)'
+NEW_PARTS="$OLD_PARTS,-(userdata)"
+DIRS="etc var usr opt root data home mnt media"
+OV=/overlay
+LOG=/tmp/overlay.log
+MIN_MB=16
+
+log()   { echo "$*" >> $LOG; }
+event() {
+    log "$*"
+    echo "$(date '+%d.%m %H:%M:%S') storage: $*" >> /tmp/digifox_events.log
+}
+
+mtd_num() {     # номер mtd-раздела по имени
+    sed -n "s/^mtd\([0-9]*\):.*\"$1\"\$/\1/p" /proc/mtd
+}
+
+# --- перевод старой разметки: дописать userdata в mtdparts U-Boot ----------------
+migrate_env() {
+    command -v fw_printenv >/dev/null && command -v fw_setenv >/dev/null || {
+        event "нет fw_printenv — разметку не меняю"; return; }
+    cur=$(fw_printenv -n mtdparts 2>/dev/null)
+    if [ "$cur" = "$NEW_PARTS" ]; then
+        log "mtdparts уже с userdata — раздел появится после перезагрузки"
+        return
+    fi
+    if [ "$cur" != "$OLD_PARTS" ]; then
+        # неизвестная разметка (или окружение не читается) — не трогать
+        event "mtdparts не как ожидалось ('$cur') — разметку не меняю"
+        return
+    fi
+    fw_setenv mtdparts "$NEW_PARTS" 2>>$LOG
+    sync
+    chk=$(fw_printenv -n mtdparts 2>/dev/null)
+    if [ "$chk" = "$NEW_PARTS" ]; then
+        event "в разметку добавлен раздел userdata — заработает после перезагрузки"
+    else
+        event "запись mtdparts не подтвердилась ('$chk') — возвращаю прежнюю"
+        fw_setenv mtdparts "$OLD_PARTS" 2>>$LOG
+        sync
+    fi
+}
+
+# --- раздел userdata: подключить UBI, создать том, смонтировать в /overlay ----------
+mount_userdata() {
+    n=$1
+    dev=/dev/ubi$n
+    ubinfo $dev >/dev/null 2>&1 || ubiattach /dev/ubi_ctrl -m $n -d $n >>$LOG 2>&1
+    # наш том: UBI на месте, том userdata есть, на нём наша метка
+    if ubinfo $dev -N userdata >/dev/null 2>&1; then
+        if ! mount -t ubifs ubi$n:userdata $OV 2>>$LOG; then
+            # том есть, но не монтируется: не стирать (там могут быть настройки) —
+            # работать по-старому, причина в журнале
+            event "том userdata есть, но не смонтировался — не трогаю его"
+            return 1
+        fi
+        [ -f $OV/.digifox-userdata ] && return 0
+        umount $OV                       # чужая файловая система (не наша метка)
+    fi
+    # первый запуск (или на месте раздела — что-то чужое): разметить заново
+    event "userdata: первая разметка (mtd$n)"
+    ubidetach -m $n >>$LOG 2>&1
+    ubiformat /dev/mtd$n -y -q >>$LOG 2>&1 || { event "ubiformat mtd$n не удался"; return 1; }
+    ubiattach /dev/ubi_ctrl -m $n -d $n >>$LOG 2>&1 || { event "ubiattach mtd$n не удался"; return 1; }
+    ubimkvol $dev -N userdata -m >>$LOG 2>&1 || { event "ubimkvol не удался"; return 1; }
+    mount -t ubifs ubi$n:userdata $OV 2>>$LOG || { event "userdata не смонтировался"; return 1; }
+    mkdir -p $OV/upper $OV/work
+    date > $OV/.digifox-userdata
+    sync
+    return 0
+}
+
+# --- после онлайн-обновления: в слое изменений оставить только пользовательское -----
+cleanup_upper() {
+    [ -f $OV/.update-cleanup ] || return 0
+    rules=/usr/share/digifox/keep.rules
+    if [ -f $rules ] && command -v rsync >/dev/null; then
+        mkdir -p /tmp/ov-empty
+        rsync -r --delete --filter="merge $rules" /tmp/ov-empty/ $OV/upper/ >>$LOG 2>&1
+        rmdir /tmp/ov-empty
+        rm -rf $OV/work/*
+        event "после обновления слой изменений очищен (оставлены настройки)"
+    else
+        event "нет keep.rules/rsync — слой изменений после обновления не очищен"
+    fi
+    rm -f $OV/.update-cleanup
+    sync
+}
+
+start() {
+    : > $LOG
+    # в системе без overlay — аварийный выход
+    [ -f /data/.overlay-disable ] && { log "отключено: /data/.overlay-disable"; return 0; }
+
+    n=$(mtd_num userdata)
+    if [ -z "$n" ]; then
+        # перевод старой разметки — пока только по явному разрешению (проверка на
+        # первых Фоксах): touch /etc/digifox/userdata-enable и перезагрузка
+        if [ -f /etc/digifox/userdata-enable ]; then
+            migrate_env
+        else
+            log "старая разметка без userdata; перевод: touch /etc/digifox/userdata-enable"
+        fi
+        return 0
+    fi
+    size=$(cat /sys/class/mtd/mtd$n/size 2>/dev/null || echo 0)
+    if [ $((size / 1048576)) -lt $MIN_MB ]; then
+        event "userdata слишком мал ($((size / 1048576)) МБ) — работаю по-старому"
+        return 0
+    fi
+
+    mkdir -p $OV 2>/dev/null
+    [ -d $OV ] || { event "нет каталога $OV в системе"; return 0; }
+    mount_userdata $n || { event "userdata недоступен — работаю по-старому (система на запись)"; return 0; }
+
+    if [ -f $OV/.disable ] || [ -f $OV/upper/data/.overlay-disable ]; then
+        log "отключено: $OV/.disable — userdata смонтирован, система на запись"
+        return 0
+    fi
+
+    grep -qw overlay /proc/filesystems || modprobe overlay >>$LOG 2>&1
+    grep -qw overlay /proc/filesystems || { event "нет overlayfs в ядре — работаю по-старому"; umount $OV; return 0; }
+
+    cleanup_upper
+
+    done_dirs=""
+    for d in $DIRS; do
+        [ -d /$d ] || continue
+        mkdir -p $OV/upper/$d $OV/work/$d
+        if mount -t overlay "ov-$d" -o "lowerdir=/$d,upperdir=$OV/upper/$d,workdir=$OV/work/$d" /$d 2>>$LOG; then
+            done_dirs="/$d $done_dirs"
+        else
+            event "overlay /$d не смонтировался — откатываю, работаю по-старому"
+            for m in $done_dirs; do umount $m 2>>$LOG; done
+            umount $OV 2>>$LOG
+            return 0
+        fi
+    done
+
+    sync
+    if mount -o remount,ro / 2>>$LOG; then
+        log "готово: rootfs только для чтения, изменения на userdata"
+    else
+        event "rootfs не перемонтировался только для чтения (занят?) — overlay работает, rootfs на запись"
+    fi
+    return 0
+}
+
+case "$1" in
+    start) start ;;
+    stop)  sync ;;
+    *)     echo "Usage: $0 {start|stop}" ;;
+esac
+exit 0

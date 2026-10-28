@@ -33,6 +33,13 @@ trap 'rm -f "$BOOT_IMAGE_TMP"' EXIT HUP INT TERM
 
 zimage_size=$(wc -c < "$ZIMAGE")
 dtb_size=$(wc -c < "$BOOT_DTB")
+# U-Boot reads only this much of the kernel (bootcmd: "mtd read boot 0x00008000 0 0x360000"):
+# a bigger zImage would boot truncated. Leave modules (=m) instead of growing it.
+KERNEL_READ=3538944
+if [ "$zimage_size" -gt "$KERNEL_READ" ]; then
+    echo "zImage ($zimage_size) is bigger than U-Boot reads ($KERNEL_READ)" >&2
+    exit 1
+fi
 if [ "$zimage_size" -gt "$DTB_OFFSET" ]; then
     echo "zImage overlaps DTB in boot.img" >&2
     exit 1
