@@ -13,8 +13,8 @@
 # смонтировалось), Фокс просто работает как раньше — rootfs на запись. Причина — в
 # /tmp/digifox_events.log и в /tmp/overlay.log.
 #
-# Разметку старых Фоксов (без userdata) этот же скрипт переводит сам (пока — только при
-# наличии /etc/digifox/userdata-enable): дописывает
+# Разметку старых Фоксов (без userdata) этот же скрипт переводит сам (если нет
+# /etc/digifox/userdata-disable): дописывает
 # ",-(userdata)" в mtdparts окружения U-Boot. rootfs при этом не двигается ни на байт —
 # раздел userdata занимает NAND после него, которую раньше никто не использовал.
 # Работает со следующей перезагрузки.
@@ -104,7 +104,9 @@ cleanup_upper() {
     rules=/usr/share/digifox/keep.rules
     if [ -f $rules ] && command -v rsync >/dev/null; then
         mkdir -p /tmp/ov-empty
-        rsync -r --delete --filter="merge $rules" /tmp/ov-empty/ $OV/upper/ >>$LOG 2>&1
+        # «cannot delete non-empty directory» — каталоги, где остались настройки: это норма
+        rsync -r --delete --filter="merge $rules" /tmp/ov-empty/ $OV/upper/ 2>&1 | \
+            grep -v 'cannot delete non-empty directory' >>$LOG
         rmdir /tmp/ov-empty
         rm -rf $OV/work/*
         event "после обновления слой изменений очищен (оставлены настройки)"
@@ -122,12 +124,11 @@ start() {
 
     n=$(mtd_num userdata)
     if [ -z "$n" ]; then
-        # перевод старой разметки — пока только по явному разрешению (проверка на
-        # первых Фоксах): touch /etc/digifox/userdata-enable и перезагрузка
-        if [ -f /etc/digifox/userdata-enable ]; then
-            migrate_env
+        # старая разметка без userdata: перевести (запрет: /etc/digifox/userdata-disable)
+        if [ -f /etc/digifox/userdata-disable ]; then
+            log "старая разметка без userdata; перевод запрещён /etc/digifox/userdata-disable"
         else
-            log "старая разметка без userdata; перевод: touch /etc/digifox/userdata-enable"
+            migrate_env
         fi
         return 0
     fi
