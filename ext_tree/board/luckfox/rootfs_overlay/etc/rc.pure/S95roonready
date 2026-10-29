@@ -22,6 +22,8 @@ start() {
             LD_PRELOAD=$PRE /opt/RoonReady/raat_app /tmp/raat_plain.conf > /dev/null 2>&1 &
         fi
     fi
+    # название трека, обложка и позиция для экрана усилителя и приложения (MPRIS -> /tmp/nowplaying)
+    ( sleep 4; /usr/bin/pfmeta roon ) >/dev/null 2>&1 &
     sleep 0.5
     if [ -f /tmp/mixer_control_cache ]; then
         MIXER=$(cat /tmp/mixer_control_cache | cut -d, -f1 | tr -d "'")
@@ -30,6 +32,7 @@ start() {
     }
 stop() {
     killall -9 raat_app
+    [ -f /tmp/pfmeta_roon.pid ] && kill "$(cat /tmp/pfmeta_roon.pid)" 2>/dev/null; rm -f /tmp/pfmeta_roon.pid
 }
 restart() {
 	stop

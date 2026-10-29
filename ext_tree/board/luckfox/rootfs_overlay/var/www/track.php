@@ -6,7 +6,7 @@
 //   GET ?prog=1  -> для усилителя: "позиция_с длительность_с 1|0" (пусто — нет трека)
 //   GET ?amp=1   -> одна строка для экрана усилителя: "исполнитель\tназвание" в однобайтовой
 //                   кодировке шрифта усилителя (ASCII + кириллица 0x80..0xBF), пусто — нет трека
-// Источники: /tmp/nowplaying и /tmp/np_prog (пишет pfmeta для Qobuz, Spotify, AirPlay), MPD и
+// Источники: /tmp/nowplaying и /tmp/np_prog (пишет pfmeta для Qobuz, Spotify, AirPlay, Roon), MPD и
 // веб-радио APlayer (запрос здесь: станция и что в эфире). Обложки и длительности, которых плеер не дал, ищутся в iTunes (pfmeta art).
 // Положить на Фокс в /var/www/track.php.
 
@@ -126,6 +126,9 @@ function fill_art(&$t) {
 }
 
 $t = current_track($np_file);
+// обложка, отданная самим Фоксом (/np_cover.jpg — Roon): полный адрес для приложения
+if ($t && isset($t['cover'][0]) && $t['cover'][0] === '/')
+    $t['cover'] = 'http://' . ($_SERVER['HTTP_HOST'] ?? '127.0.0.1') . $t['cover'];
 if ($t) {
     fill_art($t);
     if ($t['dur'] > 0 && $t['pos'] > $t['dur']) $t['pos'] = $t['dur'];

@@ -9,6 +9,7 @@
 #   pfmeta qobuz      читает вывод qobuz-connect со stdin (S95qobuz: "... 2>&1 | pfmeta qobuz")
 #   pfmeta spotify    вызывается librespot --onevent (переменные PLAYER_EVENT, NAME, ARTISTS, ALBUM)
 #   pfmeta airplay    фоновый разбор канала метаданных shairport-sync (запускает pfctl serve)
+#   pfmeta roon       опрос MPRIS Roon Ready (raat_app, транспорт hifiberry) раз в 2 с (S95roonready)
 #   pfmeta art <ключ> <url>   поиск обложки и длительности (iTunes) -> /tmp/np_art
 #   pfmeta clear      стереть
 
@@ -194,6 +195,58 @@ airplay)
         fi
         sleep 2
     done
+    ;;
+
+roon)
+    # raat_app (транспорт hifiberry) публикует MPRIS org.mpris.MediaPlayer2.raat: статус,
+    # xesam:title/artist/album, mpris:artUrl, Position. Опрашиваем, пока raat_app жив.
+    if [ -f /tmp/pfmeta_roon.pid ] && kill -0 "$(cat /tmp/pfmeta_roon.pid)" 2>/dev/null; then exit 0; fi
+    echo $$ > /tmp/pfmeta_roon.pid
+    last=""; lst=""
+    while pidof raat_app >/dev/null; do
+        r=$(timeout 3 dbus-send --system --print-reply --dest=org.mpris.MediaPlayer2.raat \
+              /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.GetAll \
+              string:org.mpris.MediaPlayer2.Player 2>/dev/null)
+        if [ -n "$r" ]; then
+            # -> статус \t название \t исполнитель \t альбом \t обложка \t длина_мкс \t позиция_мкс
+            line=$(printf '%s\n' "$r" | awk '
+                function str(  v) { v = $0; sub(/^[^"]*"/, "", v); sub(/"[^"]*$/, "", v); return v }
+                /dict entry\(/            { wk = 1; arr = ""; next }
+                wk && /string "/          { cur = str(); wk = 0; next }
+                cur != "" && /variant/ && /array \[/ { arr = cur; cur = ""; next }
+                cur != "" && /variant/ && /string "/ { val[cur] = str(); cur = ""; next }
+                cur != "" && /variant/ && /(int64|uint64|int32|uint32|double) / { val[cur] = $NF; cur = ""; next }
+                arr != "" && /string "/   { v = str(); val[arr] = (val[arr] == "") ? v : val[arr] ", " v; next }
+                arr != "" && /^[ \t]*\]/  { arr = "" }
+                END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", val["PlaybackStatus"], val["xesam:title"],
+                      val["xesam:artist"], val["xesam:album"], val["mpris:artUrl"], val["mpris:length"], val["Position"] }')
+            st=$(printf '%s' "$line" | cut -f1); ti=$(printf '%s' "$line" | cut -f2)
+            ar=$(printf '%s' "$line" | cut -f3); al=$(printf '%s' "$line" | cut -f4)
+            art=$(printf '%s' "$line" | cut -f5); len=$(printf '%s' "$line" | cut -f6)
+            pos=$(printf '%s' "$line" | cut -f7)
+            if [ -n "$ti$ar" ] && [ "$st" != Stopped ]; then
+                key="$ar|$ti|$al|$art"
+                if [ "$key" != "$last" ]; then
+                    last=$key
+                    cov=""
+                    case "$art" in
+                        http*) cov=$art ;;
+                        file://*|/*)            # обложка в файле: отдаём через веб (/np_cover.jpg -> /tmp)
+                            f=${art#file://}
+                            [ -f "$f" ] && cp "$f" /tmp/np_cover.jpg.tmp && mv /tmp/np_cover.jpg.tmp /tmp/np_cover.jpg && \
+                                cov="/np_cover.jpg?$(date +%s)" ;;
+                    esac
+                    ms=0; case "$len" in ''|*[!0-9]*) ;; *) ms=$((len / 1000)) ;; esac
+                    put raat "$ar" "$ti" "$al" "$cov" "$ms"
+                fi
+                ps=play; [ "$st" = Paused ] && ps=pause
+                case "$pos" in ''|*[!0-9]*) [ "$ps" != "$lst" ] && prog 0 $ps ;; *) prog $((pos / 1000)) $ps ;; esac
+                lst=$ps
+            fi
+        fi
+        sleep 2
+    done
+    rm -f /tmp/pfmeta_roon.pid
     ;;
 
 art)
