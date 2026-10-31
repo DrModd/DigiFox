@@ -30,7 +30,9 @@ DTB_OFFSET=3932160          # 0x3C0000, as in post-build.sh and /opt/2*.sh
 CUR_BUILD=$(cat /etc/digifox-release 2>/dev/null || echo unknown)
 
 log()  { echo "$*"; }
-fail() { echo "ОШИБКА: $*"; cleanup; exit 1; }
+fail() { echo "ОШИБКА: $*"; rm -f /tmp/fox_upd; cleanup; exit 1; }
+# шаг обновления для усилителя (pfctl -> @UPD): звук приглушён, на экране «DIGIFOX UPDATE»
+amp_step() { echo "$1" > /tmp/fox_upd.tmp && mv /tmp/fox_upd.tmp /tmp/fox_upd; }
 
 cleanup() {
     grep -q " $NEW " /proc/mounts 2>/dev/null && umount "$NEW"
@@ -107,6 +109,7 @@ avail=$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)
 log "Свободно памяти: ${avail} МБ"
 [ "${avail:-0}" -ge 90 ] || fail "мало свободной памяти (нужно ~90 МБ), перезагрузите Фокс и повторите"
 
+amp_step "1 DOWNLOADING"
 log "Скачиваю образ..."
 fetch rootfs.squashfs "$WORK/rootfs.squashfs" || fail "не скачался rootfs.squashfs"
 fetch boot.img "$WORK/boot.img" || fail "не скачался boot.img"
@@ -169,6 +172,7 @@ cp /etc/i2s.conf "$WORK/i2s.conf" 2>/dev/null
 mkdir -p /etc/digifox && echo "$NEW_BUILD" > /etc/digifox/update-pending && sync
 # копия пользовательских настроек: что бы ни сделал rsync, вернуть их после
 cp -a /etc/digifox "$WORK/etc-digifox" 2>/dev/null
+amp_step "2 INSTALLING"
 log "Обновляю файлы системы..."
 # rsync и его библиотеки берём из нового образа (загрузчик и библиотеки образа),
 # а не из системы: если прошлое обновление прервалось, системные библиотеки
@@ -227,6 +231,7 @@ dd if="$WORK/boot.img" of="$WORK/new_kernel" bs=65536 count=$((DTB_OFFSET / 6553
 if cmp -s "$WORK/cur_kernel" "$WORK/new_kernel"; then
     log "Ядро не изменилось."
 else
+    amp_step "3 WRITING KERNEL"
     log "Записываю новое ядро (boot.img)... Не выключайте питание!"
     size=$(wc -c < "$WORK/boot.img")
     flash_erase "$BOOT_MTD" 0 0 >/dev/null || fail "flash_erase boot — восстановите прошивку через RV1106_Toolkit"
@@ -258,6 +263,7 @@ if [ -n "$ROOTW" ]; then
     umount "$WORK/rom" 2>/dev/null
 fi
 rm -f /etc/digifox/update-pending; sync
+amp_step "4 RESTARTING"
 log "Готово: $CUR_BUILD -> $NEW_BUILD"
 log "Перезагрузка через 5 секунд..."
 cleanup

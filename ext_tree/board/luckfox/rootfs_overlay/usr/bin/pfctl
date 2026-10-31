@@ -66,6 +66,8 @@
 #   @RATE ...          смена потока
 #   @SRC <id>          сменился плеер (с веб-страницы, из приложения, с усилителя)
 #   @USB on|off        включён/выключен USBtoI2S
+#   @UPD <шаг> <текст> идёт обновление DigiFox (1 DOWNLOADING .. 4 RESTARTING), "@UPD -" — прервано;
+#                      усилитель приглушает звук до перезагрузки Фокса
 #   @TRACK ...         сменился трек (Qobuz, Spotify, AirPlay, MPD — см. pfmeta, track.php).
 #   @LVL <L> <R> <pk>  уровни для стрелочных индикаторов (pfrate, только при /tmp/amp_vu = 1)
 #   @PROG <поз> <длит> <1|0>  позиция и длительность трека, с; 1 — играет (усилитель
@@ -223,7 +225,7 @@ serve() {
     [ -x /usr/bin/pfmeta ] && /usr/bin/pfmeta airplay </dev/null >/dev/null 2>&1 &
     # фоновый наблюдатель: смена потока и запросы приложения к усилителю
     (
-        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""; j=0; last_pg="-"; q=4; last_ip=""
+        last=""; n=0; m=0; k=0; last_svc=""; last_usb=""; last_np=""; last_tr=""; j=0; last_pg="-"; q=4; last_ip=""; last_ud=""
         # DigiFox: pfrate reports a new stream within ~20 ms (C, no forks);
         # without it fall back to the shell poll below (~0.5 s)
         PFRATE=""; [ -x /usr/bin/pfrate ] && PFRATE=1
@@ -288,6 +290,12 @@ serve() {
                     if [ $q -ge 5 ]; then
                         q=0; ip_=$(net_ip)
                         [ "$ip_" != "$last_ip" ] && echo "@NET $ip_" && last_ip=$ip_
+                    fi
+                    # обновление DigiFox (update.sh -> /tmp/fox_upd): усилитель приглушает звук
+                    ud=$(cat /tmp/fox_upd 2>/dev/null)
+                    if [ "$ud" != "$last_ud" ]; then
+                        if [ -n "$ud" ]; then echo "@UPD $ud"; else echo "@UPD -"; fi
+                        last_ud=$ud
                     fi
                     if [ -f /etc/usb_to_i2s.state ]; then u=on; else u=off; fi
                     [ "$u" != "$last_usb" ] && echo "@USB $u" && last_usb=$u
