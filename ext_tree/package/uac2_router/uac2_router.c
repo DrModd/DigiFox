@@ -412,12 +412,23 @@ static snd_pcm_uframes_t convert_frames(char *buf, snd_pcm_uframes_t frames, int
     if (!dop_cand) return frames;
     int sc = dop_score(w, frames);
     if (sc >= 0) {
+        /* A block that does not match the current format is never played as it is:
+         * DoP passed on as PCM is loud ultrasonic noise, PCM unpacked as DSD is a
+         * click. It is dropped (a few ms of silence); two such blocks in a row
+         * switch the output, one is treated as a glitch. */
         if (!dop_mode) {
-            dop_hits = sc >= 95 ? dop_hits + 1 : 0;
-            if (dop_hits >= 2) { *dop_switch = 1; return 0; }      /* drop: it is DoP */
+            if (sc >= 95) {
+                if (++dop_hits >= 2) *dop_switch = 1;
+                return 0;
+            }
+            dop_hits = 0;
         } else {
-            dop_miss = sc < 50 ? dop_miss + 1 : 0;
-            if (dop_miss >= 2) { *dop_switch = 1; return 0; }      /* PCM again */
+            if (sc < 50) {
+                if (++dop_miss >= 2) *dop_switch = 1;
+                dop_have = 0;                     /* half a DoP frame is no longer valid */
+                return 0;
+            }
+            dop_miss = 0;
         }
     }
     return dop_mode ? dop_unpack(w, frames) : frames;
