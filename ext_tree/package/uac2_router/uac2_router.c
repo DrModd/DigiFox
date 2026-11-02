@@ -2,7 +2,9 @@
  * UAC2 → I2S Router for PureFox / PureCore
  *
  * Routes audio from USB Audio Class 2 gadget to I2S DAC on RV1106 (LuckFox Pico MAX).
- * Supports PCM up to 768 kHz and native DSD64–DSD512.
+ * Supports PCM up to 768 kHz, native DSD64–DSD512 and DoP (DSD over PCM, DigiFox):
+ * a PCM stream at 176.4/352.8/705.6 (192/384/768) kHz whose samples carry the DoP
+ * markers 0x05/0xFA is unpacked and sent to the I2S as native DSD64/128/256.
  *
  * Architecture: single-thread, blocking capture ↔ accumulate ↔ blocking playback.
  * USB capture paces the loop; I2S playback follows at matched rate.
@@ -96,6 +98,48 @@ static snd_pcm_t *pcm_playback = NULL;
 static char uac_card_path[256] = "";
 static char uac_card_name[64]  = "";
 static int  is_current_dsd = 0;
+/* DoP (DSD over PCM, e.g. foobar2000 over WASAPI): the host sends DSD packed in PCM
+ * (24-bit samples in 32-bit, top byte a marker 0x05/0xFA alternating per frame, then
+ * 16 DSD bits, oldest first). Detected on the PCM stream, then the I2S output is
+ * reopened as native DSD at half the frame rate: two DoP frames -> one DSD_U32 word. */
+static int  dop_cand = 0;        /* PCM rate that can carry DoP */
+static int  dop_mode = 0;        /* unpacking DoP -> native DSD to the I2S */
+static int  dop_hits = 0, dop_miss = 0;
+static int  dop_have = 0;        /* a DoP frame waiting for its pair */
+static uint32_t dop_l, dop_r;
+
+static int is_dop_rate(unsigned int rate) {
+    return rate == 176400 || rate == 352800 || rate == 705600 ||
+           rate == 192000 || rate == 384000 || rate == 768000;
+}
+
+/* share of frames (0..100) with valid DoP markers: both channels, alternating */
+static int dop_score(const uint32_t *w, snd_pcm_uframes_t frames) {
+    if (frames < 16) return -1;
+    unsigned ok = 0;
+    uint8_t prev = 0;
+    for (snd_pcm_uframes_t i = 0; i < frames; i++) {
+        uint8_t ml = (uint8_t)(w[2 * i] >> 24), mr = (uint8_t)(w[2 * i + 1] >> 24);
+        if (ml == mr && (ml == 0x05 || ml == 0xFA) && ml != prev) ok++;
+        prev = ml;
+    }
+    return (int)(ok * 100 / frames);
+}
+
+/* in place: DoP frames -> DSD_U32_LE frames (oldest byte at the MSB); returns the
+ * number of output frames (half, an odd frame waits for the next call) */
+static snd_pcm_uframes_t dop_unpack(uint32_t *w, snd_pcm_uframes_t frames) {
+    snd_pcm_uframes_t out = 0;
+    for (snd_pcm_uframes_t i = 0; i < frames; i++) {
+        uint32_t l = (w[2 * i] >> 8) & 0xFFFF, r = (w[2 * i + 1] >> 8) & 0xFFFF;
+        if (!dop_have) { dop_l = l; dop_r = r; dop_have = 1; continue; }
+        w[2 * out]     = (dop_l << 16) | l;
+        w[2 * out + 1] = (dop_r << 16) | r;
+        out++;
+        dop_have = 0;
+    }
+    return out;
+}
 /* VU meters of the amplifier: levels of what goes to the I2S (PCM straight to
  * the card only; through the "digifox" plugin it measures them itself) */
 static dfx_lvl_t *lvl = NULL;
@@ -278,6 +322,8 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
     unsigned int lrck_rate = is_dsd ? rate / 32 : rate;
 
     is_current_dsd = is_dsd;
+    dop_cand = !is_dsd && is_dop_rate(rate);
+    dop_mode = 0; dop_hits = 0; dop_miss = 0; dop_have = 0;
 
     if (is_dsd)
         printf("\n[CONFIG] DSD MODE: %s (%u Hz, LRCK %u)\n", get_dsd_name(rate), rate, lrck_rate);
@@ -335,6 +381,48 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
     return 0;
 }
 
+/* DoP found / gone on the same USB rate: reopen only the I2S output (DSD at rate/2,
+ * or PCM at rate). Capture keeps running. */
+static int reopen_playback(unsigned int rate, int dsd) {
+    if (pcm_playback) { snd_pcm_drop(pcm_playback); snd_pcm_close(pcm_playback); pcm_playback = NULL; }
+    lvl_cfg = !dsd && strcmp(i2s_device(), I2S_CARD) == 0;
+    lvl_on = lvl_cfg && amp_vu_on();
+    if (setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
+                  dsd ? rate / 2 : rate, dsd ? I2S_FORMAT_DSD : I2S_FORMAT_PCM, I2S_CHANNELS, dsd) < 0)
+        return -1;
+    snd_pcm_hw_params_t *hw;
+    snd_pcm_hw_params_alloca(&hw);
+    snd_pcm_hw_params_current(pcm_playback, hw);
+    snd_pcm_uframes_t pb;
+    snd_pcm_hw_params_get_period_size(hw, &pb, 0);
+    playback_period = pb;
+    snd_pcm_prepare(pcm_playback);
+    return 0;
+}
+
+/* captured frames -> what goes to the I2S, in place; returns the frame count.
+ * Sets *dop_switch when DoP starts/stops on a DoP-capable PCM rate. */
+static snd_pcm_uframes_t convert_frames(char *buf, snd_pcm_uframes_t frames, int *dop_switch) {
+    uint32_t *w = (uint32_t *)buf;
+    if (is_current_dsd) {                         /* native DSD: byte order */
+        size_t nwords = frames * I2S_CHANNELS;
+        for (size_t i = 0; i < nwords; i++) w[i] = BSWAP32(w[i]);
+        return frames;
+    }
+    if (!dop_cand) return frames;
+    int sc = dop_score(w, frames);
+    if (sc >= 0) {
+        if (!dop_mode) {
+            dop_hits = sc >= 95 ? dop_hits + 1 : 0;
+            if (dop_hits >= 2) { *dop_switch = 1; return 0; }      /* drop: it is DoP */
+        } else {
+            dop_miss = sc < 50 ? dop_miss + 1 : 0;
+            if (dop_miss >= 2) { *dop_switch = 1; return 0; }      /* PCM again */
+        }
+    }
+    return dop_mode ? dop_unpack(w, frames) : frames;
+}
+
 /* ── Pre-buffer: accumulate real data before first writei ─────────
  *
  * RV1106 I2S DMA auto-starts on the first snd_pcm_writei(), ignoring
@@ -360,13 +448,9 @@ static int prebuffer_from_capture(char *cap_buf, snd_pcm_uframes_t cap_period,
         snd_pcm_sframes_t frames = snd_pcm_readi(pcm_capture, cap_buf, cap_period);
         if (frames > 0) {
             errors = 0;
-            /* DSD byte-swap */
-            if (is_current_dsd) {
-                uint32_t *w = (uint32_t *)cap_buf;
-                size_t nwords = frames * I2S_CHANNELS;
-                for (size_t i = 0; i < nwords; i++)
-                    w[i] = BSWAP32(w[i]);
-            }
+            int sw = 0;
+            frames = (snd_pcm_sframes_t)convert_frames(cap_buf, (snd_pcm_uframes_t)frames, &sw);
+            if (sw) return -2;                         /* DoP on/off: reopen the output */
             /* Append to pre-buffer */
             snd_pcm_uframes_t to_copy = frames;
             if (collected + to_copy > prebuf_max_frames)
@@ -570,6 +654,7 @@ int main(void) {
             snd_pcm_uframes_t target = pb_period * PREBUF_PERIODS;
             int got = prebuffer_from_capture(buffer, period_size, pb_period,
                                              prebuf, prebuf_max, target);
+            if (got == -2) goto dop_toggle;
             if (got < 0) {
                 fprintf(stderr, "[PREBUF] Capture failed, reopening\n");
                 close_pcms();
@@ -612,12 +697,11 @@ int main(void) {
             consecutive_errors = 0;
             cap_frames_total += frames;
 
-            /* DSD byte-swap */
-            if (is_current_dsd) {
-                uint32_t *w = (uint32_t *)buffer;
-                size_t nwords = frames * I2S_CHANNELS;
-                for (size_t i = 0; i < nwords; i++)
-                    w[i] = BSWAP32(w[i]);
+            /* DSD byte order / DoP unpacking */
+            {
+                int sw = 0;
+                frames = (snd_pcm_sframes_t)convert_frames(buffer, (snd_pcm_uframes_t)frames, &sw);
+                if (sw) goto dop_toggle;
             }
 
             /* Accumulate into full playback periods */
@@ -710,6 +794,31 @@ int main(void) {
                 usleep(500000);
             }
         }
+        continue;
+
+    dop_toggle:
+        /* DoP appeared (or PCM came back) at the same USB rate: reopen the I2S
+         * output in the other format and pre-buffer again */
+        dop_mode = !dop_mode; dop_hits = 0; dop_miss = 0; dop_have = 0;
+        evlog("%s at %u Hz: I2S output %s", dop_mode ? "DoP detected" : "DoP ended",
+              current_rate, dop_mode ? "native DSD" : "PCM");
+        if (reopen_playback(current_rate, dop_mode) < 0) {
+            evlog("DoP: cannot reopen the I2S output, back to PCM");
+            close_pcms();
+            dop_mode = 0;
+        } else {
+            pb_period = playback_period;
+            free(accum_buf);
+            accum_buf = malloc(pb_period * frame_bytes);
+            prebuf_max = pb_period * PREBUF_PERIODS;
+            free(prebuf);
+            prebuf = malloc(prebuf_max * frame_bytes);
+        }
+        accum_pos = 0;
+        play_started = 0;
+        need_prebuffer = 1;
+        write_count = 0;
+        xrun_count = 0;
     }
 
     /* ── Cleanup ──────────────────────────────────────────────────── */
