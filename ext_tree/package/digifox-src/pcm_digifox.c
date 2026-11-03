@@ -63,6 +63,9 @@
 /* amplifier volume, written by pfctl: "pos max mute db power time";
  * one step is 1 dB, attenuation = max - pos */
 #define AMP_STATE   "/tmp/amp_state"
+/* amplifier settings, written by pfctl: "filter delay dsdgain standby autoon mode vmax von";
+ * dsdgain 1 = DSD +6 dB (the amp's SETTINGS -> DSD GAIN; with AK4137 it is done there) */
+#define AMP_CFG     "/tmp/amp_cfg"
 #define LOUD_BASS_F    80.0         /* low shelf, Hz: below the mid-bass "boom" */
 #define LOUD_TREB_F 10000.0         /* high shelf, Hz                        */
 #define LOUD_BASS_K   0.20          /* dB of bass per dB below the reference */
@@ -115,6 +118,7 @@ typedef struct {
     int          f_phase;           /* 0 linear, 1 intermediate, 2 minimum  */
     int          f_roll;            /* 0 standard, 1 steep, 2 slow           */
     int          f_gain3;           /* 1: −3 dB headroom                     */
+    int          dsd_g6;            /* 1: DSD +6 dB (amp setting DSD GAIN)   */
     time_t       f_mtime;
 
     /* loudness: two shelves on the 192 kHz output, gain follows the volume */
@@ -621,6 +625,17 @@ static time_t read_filter(dfx_t *d)
     return st.st_mtime ? st.st_mtime : 1;
 }
 
+/* the amp's DSD GAIN setting (third value in AMP_CFG) */
+static int read_dsd_gain(void)
+{
+    int v[3] = { 0, 0, 0 };
+    FILE *f = fopen(AMP_CFG, "r");
+    if (!f) return 0;
+    int n = fscanf(f, "%d %d %d", &v[0], &v[1], &v[2]);
+    fclose(f);
+    return n == 3 && v[2] == 1;
+}
+
 /* (re)build the resampler for the current stream and filter settings */
 static int make_soxr(dfx_t *d)
 {
@@ -636,6 +651,7 @@ static int make_soxr(dfx_t *d)
     if (d->f_roll == 2) q.passband_end = 0.80;     /* gentle: 0 dB to 80 % of Nyquist */
     soxr_io_spec_t ios = soxr_io_spec(d->sx_float ? SOXR_FLOAT32_I : SOXR_INT32_I, SOXR_INT32_I);
     if (d->f_gain3) ios.scale = 0.70794578;        /* −3 dB */
+    if (d->mode == M_DSD && d->dsd_g6) ios.scale *= 2.0;   /* DSD GAIN +6 dB (as AK4137 IGAIN6) */
     soxr_runtime_spec_t rt = soxr_runtime_spec(1);
     soxr_error_t serr = NULL;
     d->sx = soxr_create(d->sx_in, OUT_RATE, CH, &serr, &ios, &q, &rt);
@@ -663,6 +679,7 @@ static int dfx_hw_params_inner(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params
     if (!d->ring || !d->st) { free_conv(d); return -ENOMEM; }
 
     d->f_mtime = read_filter(d);
+    d->dsd_g6 = read_dsd_gain();
     memset(d->ld_z, 0, sizeof d->ld_z);
     d->ld_mtime = -1;
     loud_update(d);
@@ -973,6 +990,11 @@ static void *pump_thread(void *arg)
                 int g = d->f_gain3;
                 d->f_mtime = read_filter(d);
                 if (g == d->f_gain3 || d->mode != M_PASS) make_soxr(d);
+            }
+            /* DSD GAIN switched on the amplifier */
+            if (d->mode == M_DSD) {
+                int g6 = read_dsd_gain();
+                if (g6 != d->dsd_g6) { d->dsd_g6 = g6; make_soxr(d); }
             }
         }
         /* loudness: switch on the web page, gain from the amplifier volume */
