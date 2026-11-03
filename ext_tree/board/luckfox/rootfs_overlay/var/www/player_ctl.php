@@ -7,7 +7,8 @@
 //   aplayer   (веб-радио и файлы APlayer)    — его API на :7778 (Pause/Next/Prev; радио: стоп/продолжить)
 //   raat      (Roon Ready)                   — MPRIS по D-Bus: транспорт hifiberry в raat_app (/etc/raat.conf)
 //   qobuz     (Qobuz Connect)                — FIFO /tmp/qobuz_ctl, его читает libassert_hook.so внутри плеера
-// Остальные (NAA, AirPlay, Spotify, LMS, APScream, aprenderer) — "ERR unsupported".
+//   spotify   (Spotify Connect)              — REST API go-librespot на 127.0.0.1:3678 (у прежнего librespot API нет)
+// Остальные (NAA, AirPlay, LMS, APScream, aprenderer) — "ERR unsupported".
 header('Content-Type: text/plain; charset=utf-8');
 header('Cache-Control: no-store');
 
@@ -86,6 +87,19 @@ function ctl_qobuz($cmd) {
     return $rc === 0 ? 'OK qobuz' : 'ERR qobuz_not_running';
 }
 
+// --- Spotify Connect (go-librespot) ------------------------------------------
+function ctl_spotify($cmd) {
+    $p = ['toggle' => 'playpause', 'next' => 'next', 'prev' => 'prev'][$cmd];
+    $ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\r\n",
+                                             'content' => '{}', 'timeout' => 5, 'ignore_errors' => true]]);
+    $r = @file_get_contents('http://127.0.0.1:3678/player/' . $p, false, $ctx);
+    if ($r === false) return 'ERR spotify_no_control';
+    $code = 0;
+    foreach ((array)($http_response_header ?? []) as $h)
+        if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $code = (int)$m[1];
+    return ($code >= 200 && $code < 300) ? 'OK spotify' : 'ERR spotify_' . $code;
+}
+
 $s = svc();
 if (file_exists('/etc/usb_to_i2s.state')) { echo 'ERR usb_mode'; exit; }
 switch ($s) {
@@ -93,5 +107,6 @@ switch ($s) {
     case 'aplayer': echo ctl_aplayer($cmd); break;
     case 'raat':    echo ctl_raat($cmd); break;
     case 'qobuz':   echo ctl_qobuz($cmd); break;
+    case 'spotify': echo ctl_spotify($cmd); break;
     default:        echo 'ERR unsupported ' . ($s === '' ? '-' : $s);
 }

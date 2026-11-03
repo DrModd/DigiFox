@@ -1,0 +1,11 @@
+config BR2_PACKAGE_GO_LIBRESPOT
+    bool "go-librespot"
+    depends on BR2_arm
+    select BR2_PACKAGE_ALSA_LIB
+    help
+      Spotify Connect client in Go (devgianlu/go-librespot), with a REST API
+      and WebSocket events: play/pause/next/prev/seek and track metadata.
+      Prebuilt release binary (linux armv6 build, ARMv7 code, glibc,
+      needs libasound). Installed as /usr/lib/go-librespot/librespot so the
+      existing service detection ("librespot") keeps working.
+      https://github.com/devgianlu/go-librespot

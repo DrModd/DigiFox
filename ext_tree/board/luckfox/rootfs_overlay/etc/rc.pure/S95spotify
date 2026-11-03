@@ -23,6 +23,49 @@ start() {
     
     NAME=`hostname`_`ifconfig eth0 | awk '/inet addr/{print substr($2,6)}'`
 
+    # DigiFox: go-librespot (REST API: кнопки плеера с пульта и из приложения, точный
+    # трек и позиция). Не поднялся — прежний librespot. Вернуть прежний насовсем:
+    # touch /etc/digifox/spotify-legacy
+    GLR=/usr/lib/go-librespot/librespot
+    if [ -x $GLR ] && [ ! -f /etc/digifox/spotify-legacy ]; then
+        CFG=/etc/digifox/go-librespot
+        mkdir -p $CFG
+        cat > $CFG/config.yml <<EOF
+log_level: info
+device_name: "$NAME"
+device_type: speaker
+audio_backend: alsa
+audio_device: default
+mixer_device: ""
+external_volume: true
+initial_volume: 100
+volume_steps: 100
+bitrate: 320
+flac_enabled: true
+normalisation_disabled: true
+zeroconf_enabled: true
+zeroconf_backend: avahi
+credentials:
+  type: zeroconf
+  zeroconf:
+    persist_credentials: true
+server:
+  enabled: true
+  address: 127.0.0.1
+  port: 3678
+EOF
+        $GLR -config_dir $CFG > /tmp/librespot.log 2>&1 &
+        GPID=$!
+        sleep 3
+        if kill -0 $GPID 2>/dev/null; then
+            renice -15 $GPID 2>/dev/null
+            ( sleep 2; /usr/bin/pfmeta spotify-api ) >/dev/null 2>&1 &
+            echo "OK (go-librespot)"
+            return 0
+        fi
+        echo "$(date '+%d.%m %H:%M:%S') spotify: go-librespot не запустился ($(tail -1 /tmp/librespot.log)) — прежний librespot" >> /tmp/digifox_events.log
+    fi
+
     /usr/bin/librespot \
         --cache /tmp --cache-size-limit 12M \
         --bitrate 320 \
@@ -44,6 +87,7 @@ start() {
 
 stop() {
     killall -9 librespot 2>/dev/null
+    [ -f /tmp/pfmeta_spotify.pid ] && kill "$(cat /tmp/pfmeta_spotify.pid)" 2>/dev/null; rm -f /tmp/pfmeta_spotify.pid
 }
 restart() {
 	stop

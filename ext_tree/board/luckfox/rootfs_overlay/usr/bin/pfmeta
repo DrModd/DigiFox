@@ -8,6 +8,7 @@
 #
 #   pfmeta qobuz      читает вывод qobuz-connect со stdin (S95qobuz: "... 2>&1 | pfmeta qobuz")
 #   pfmeta spotify    вызывается librespot --onevent (переменные PLAYER_EVENT, NAME, ARTISTS, ALBUM)
+#   pfmeta spotify-api  опрос API go-librespot (127.0.0.1:3678/status) раз в 2 с (S95spotify)
 #   pfmeta airplay    фоновый разбор канала метаданных shairport-sync (запускает pfctl serve)
 #   pfmeta roon       опрос MPRIS Roon Ready (raat_app, транспорт hifiberry) раз в 2 с (S95roonready)
 #   pfmeta art <ключ> <url>   поиск обложки и длительности (iTunes) -> /tmp/np_art
@@ -133,6 +134,34 @@ spotify)
         stopped)
             [ -f $PROG ] && set -- $(cat $PROG) && [ "$3" = play ] && prog $(( $1 + ($(date +%s) - $2) * 1000 )) pause ;;
     esac
+    ;;
+
+spotify-api)
+    # go-librespot: опрос его API (GET /status) раз в 2 с, пока он работает (S95spotify).
+    # JSON без jq: строки достаём sed'ом (кавычки внутри названий заменены на ')
+    if [ -f /tmp/pfmeta_spotify.pid ] && kill -0 "$(cat /tmp/pfmeta_spotify.pid)" 2>/dev/null; then exit 0; fi
+    echo $$ > /tmp/pfmeta_spotify.pid
+    last=""; lst=""
+    js() { printf '%s' "$j" | sed -n "s/.*[{,]\"$1\":\"\([^\"]*\)\".*/\1/p"; }
+    jn() { printf '%s' "$j" | sed -n "s/.*[{,]\"$1\":\([0-9]*\).*/\1/p"; }
+    jb() { printf '%s' "$j" | grep -q "\"$1\":true" && echo 1; }
+    while pidof librespot >/dev/null; do
+        j=$(wget -q -T 3 -O - http://127.0.0.1:3678/status 2>/dev/null | tr -d '\n' | sed "s/\\\\\"/'/g")
+        tr=${j#*\"track\":}
+        if [ -n "$j" ] && [ "$tr" != "$j" ] && [ -z "$(jb stopped)" ]; then
+            ps=play; [ -n "$(jb paused)" ] && ps=pause
+            j=$tr
+            ti=$(js name); al=$(js album_name); cov=$(js album_cover_url)
+            ar=$(printf '%s' "$j" | sed -n 's/.*"artist_names":\["\([^"]*\)".*/\1/p')
+            dur=$(jn duration); pos=$(jn position)
+            key="$ar|$ti|$al"
+            if [ "$key" != "$last" ]; then last=$key; put spotify "$ar" "$ti" "$al" "$cov" "${dur:-0}"; fi
+            [ -n "$pos" ] && prog "$pos" $ps
+            lst=$ps
+        fi
+        sleep 2
+    done
+    rm -f /tmp/pfmeta_spotify.pid
     ;;
 
 airplay)
