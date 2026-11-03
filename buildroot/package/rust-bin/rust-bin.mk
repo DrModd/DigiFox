@@ -6,7 +6,8 @@
 
 # When updating this version, check whether support/download/cargo-post-process
 # still generates the same archives.
-RUST_BIN_VERSION = 1.85.0
+RUST_BIN_VERSION = 1.95.0
+# DigiFox: 1.95 for qobine (parking_lot 0.13, stream-download 0.24 need it); was 1.85.0
 #RUST_BIN_VERSION = 1.84.1
 RUST_BIN_SITE = https://static.rust-lang.org/dist
 RUST_BIN_LICENSE = Apache-2.0 or MIT
