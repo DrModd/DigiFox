@@ -30,6 +30,7 @@
 #include <sys/mman.h>
 #include <stdarg.h>
 #include <time.h>
+#include <fcntl.h>
 
 /* DigiFox: rare events into the same log as the converter (diag.php), kept
  * on the flash so they survive a hang and the reboot after it */
@@ -58,6 +59,28 @@ static const char *i2s_device(void) {
     FILE *f = fopen(SRCMODE_FILE, "r");
     if (f) { if (!fgets(m, sizeof m, f)) m[0] = 0; fclose(f); }
     return strncmp(m, "fox", 3) == 0 ? "digifox" : I2S_CARD;
+}
+/* Усилитель (UART ttyS2, pf_link): "@HUSH <мс>" — заглушить на время перенастройки
+ * выхода. В режиме АК при смене частоты, DSD <-> PCM и остановке потока такт и данные
+ * на AK4137 на миг пропадают — щелчок. Глушим заранее, после пуска нового потока
+ * — "@HUSH 250": звук вернётся, когда AK4137 захватит поток. В режиме fox не нужно
+ * (на I2S всегда PCM 192 кГц из модуля пересчёта). */
+static int  amp_fd = -1;
+static int  hush_on = 0;
+static void amp_hush(int ms)
+{
+    if (strcmp(i2s_device(), I2S_CARD) != 0) return;
+    if (amp_fd < 0) amp_fd = open("/dev/ttyS2", O_WRONLY | O_NOCTTY | O_NONBLOCK);
+    if (amp_fd < 0) return;
+    char l[24];
+    int n = snprintf(l, sizeof l, "@HUSH %d\n", ms);
+    if (write(amp_fd, l, (size_t)n) == n) hush_on = ms > 0;
+}
+/* перед закрытием выхода: заглушить и дать усилителю ~20 мс отработать */
+static void amp_hush_before(void)
+{
+    amp_hush(1500);
+    if (hush_on) usleep(20000);
 }
 #define SYSFS_UAC2_PATH "/sys/class/u_audio"
 #define SYSFS_RATE_FILE      "rate"
@@ -673,6 +696,7 @@ int main(void) {
                            current_rate, rate, write_count, xrun_count);
                     evlog("rate %u -> %d Hz, output %s (writes %lu, xruns %lu)",
                           current_rate, rate, i2s_device(), write_count, xrun_count);
+                    if (pcm_playback) amp_hush_before();
                     int cfg_ok = configure_audio(rate, uac_card, &buffer, &buffer_size, &period_size) == 0;
                     /* the host sends this rate now: never reopen at the old one (that gave
                      * endless USB overruns at 352.8 kHz while the host sent 705.6 kHz) */
@@ -748,6 +772,7 @@ int main(void) {
             cap_frames_total += got;
             need_prebuffer = 0;
             play_started = 1;
+            if (hush_on) { amp_hush(250); hush_on = 0; }   /* новый поток пошёл: звук через 250 мс */
             last_status_frames = cap_frames_total;  /* Defer first STAT */
             continue;
         }
@@ -757,6 +782,7 @@ int main(void) {
         if (play_started && snd_pcm_wait(pcm_capture, USB_STARVE_MS) == 0) {
             evlog("no data from the host for %d ms at %u Hz: I2S stopped, waiting (writes %lu)",
                   USB_STARVE_MS, current_rate, write_count);
+            amp_hush_before();
             snd_pcm_drop(pcm_playback);
             snd_pcm_prepare(pcm_playback);
             need_prebuffer = 1;
@@ -875,6 +901,7 @@ int main(void) {
         dop_mode = !dop_mode; dop_hits = 0; dop_miss = 0; dop_have = 0;
         evlog("%s at %u Hz: I2S output %s", dop_mode ? "DoP detected" : "DoP ended",
               current_rate, dop_mode ? "native DSD" : "PCM");
+        amp_hush_before();
         if (reopen_playback(current_rate, dop_mode) < 0) {
             evlog("DoP: cannot reopen the I2S output, back to PCM");
             close_pcms();
