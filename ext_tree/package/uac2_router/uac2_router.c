@@ -126,6 +126,12 @@ static int dop_score(const uint32_t *w, snd_pcm_uframes_t frames) {
     return (int)(ok * 100 / frames);
 }
 
+/* a block of digital silence (all samples 0): players send it between tracks */
+static int all_zero(const uint32_t *w, snd_pcm_uframes_t frames) {
+    for (snd_pcm_uframes_t i = 0; i < frames * 2; i++) if (w[i]) return 0;
+    return 1;
+}
+
 /* in place: DoP frames -> DSD_U32_LE frames (oldest byte at the MSB); returns the
  * number of output frames (half, an odd frame waits for the next call) */
 static snd_pcm_uframes_t dop_unpack(uint32_t *w, snd_pcm_uframes_t frames) {
@@ -410,6 +416,17 @@ static snd_pcm_uframes_t convert_frames(char *buf, snd_pcm_uframes_t frames, int
         return frames;
     }
     if (!dop_cand) return frames;
+    /* silence between DSD tracks (plain zeros, no DoP markers): stay in DSD and
+     * play DSD silence (0x69 pattern) instead of switching to PCM and back —
+     * that reopened the output twice per track change (clicks) */
+    if (dop_mode && all_zero(w, frames)) {
+        snd_pcm_uframes_t n = (frames + dop_have) / 2;
+        for (snd_pcm_uframes_t i = 0; i < n * 2; i++) w[i] = 0x69696969u;
+        dop_have = (int)((frames + dop_have) & 1);
+        dop_l = dop_r = 0x6969;                   /* a waiting half frame is silence too */
+        dop_miss = 0;
+        return n;
+    }
     int sc = dop_score(w, frames);
     if (sc >= 0) {
         /* A block that does not match the current format is never played as it is:
