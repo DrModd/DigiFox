@@ -40,6 +40,18 @@ persist() {
     sync
 }
 
+# хвост журнала ядра — на флеш, когда он изменился (проверка раз в 5 с): после
+# зависания и перезагрузки сторожевым таймером он останется в kmsg.prev
+KMSG=$LOG_DIR/kmsg.last
+kmsg_sum=""
+kmsg() {
+    k=$(dmesg | tail -80)
+    s=$(printf '%s' "$k" | md5sum | cut -c1-8)
+    [ "$s" = "$kmsg_sum" ] && return
+    kmsg_sum=$s
+    printf '%s\n' "$k" > $KMSG.tmp && mv -f $KMSG.tmp $KMSG
+}
+
 ticks() {   # utime + stime процесса, в тиках (100 в секунду)
     awk '{ print $14 + $15 }' /proc/$1/stat 2>/dev/null
 }
@@ -49,6 +61,7 @@ guard_loop() {
     while true; do
         sleep 5
         persist
+        kmsg
         pid=$(pidof uac2_router | awk '{print $1}')
         if [ -z "$pid" ]; then hot=0; last_pid=""; continue; fi
         t=$(ticks $pid)
@@ -71,6 +84,7 @@ guard_loop() {
 
 start() {
     log "Fox started (DigiFox $(cat /etc/digifox-release 2>/dev/null))"
+    [ -f $KMSG ] && mv -f $KMSG $LOG_DIR/kmsg.prev    # ядро перед прошлой перезагрузкой
     if [ -c /dev/watchdog ] && ! pidof watchdog >/dev/null; then
         # кормит каждые 5 с; не кормит 30 с — аппаратный сброс
         watchdog -T 30 -t 5 /dev/watchdog && log "hardware watchdog on (30 s)"

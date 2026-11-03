@@ -1585,7 +1585,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	return 0;
  }
  EXPORT_SYMBOL_GPL(u_audio_start_playback);
-@@ -1423,6 +1678,78 @@
+@@ -1423,6 +1678,86 @@
  	schedule_delayed_work(&g_audio->ppm_work, 1 * HZ);
  }
  
@@ -1628,9 +1628,17 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +	if (val < 500000 || val > 2000000)
 +		return -EINVAL;
 +
-+	/* Direct pitch override (diagnostic/manual use) */
++	/* Direct pitch override. DigiFox: uac2_router steers the pitch itself from the
++	 * fill of the I2S queue (the PI below sees only the capture buffer, which the
++	 * router keeps near empty, and drifted the wrong way: the I2S queue drained to an
++	 * underrun every ~12 min). A write holds the PI off for 16000 feedback cycles;
++	 * the router writes twice a second, so the PI is back within seconds if it stops.
++	 * Grace = the same span: the emergency unfreeze (capture fill below 1/64) would
++	 * fire at once, the router keeps the capture buffer near empty on purpose. */
 +	spin_lock(&uac->c_prm.lock);
 +	uac->c_prm.pitch = val;
++	uac->c_prm.fb_freeze = 16000;
++	uac->c_prm.fb_freeze_grace = 16000;
 +	spin_unlock(&uac->c_prm.lock);
 +
 +	return count;

@@ -574,6 +574,63 @@ static int prebuffer_from_capture(char *cap_buf, snd_pcm_uframes_t cap_period,
     return (int)collected;
 }
 
+/* ── USB feedback from the I2S queue ───────────────────────────────
+ *
+ * The gadget's own PI regulates the fill of the USB capture buffer, which this
+ * router keeps near empty by reading back-to-back. It cannot see the I2S queue
+ * and drifted the wrong way: feedback pinned at -500 ppm while the I2S queue
+ * drained to an underrun every ~12 min (44.1 kHz), at 384 kHz -80 -> -143 ppm and
+ * falling. Here the pitch is steered from the I2S queue itself: target 5/8 of the
+ * output buffer, PI on the error in seconds of audio (Kp: an error is corrected
+ * over ~120 s, Ti 600 s holds the host/I2S clock offset; overdamped). A write to
+ * the 'feedback' attribute holds the kernel PI off (kernel side, 1.0.114). */
+static double  fb_int  = 0;      /* integral of the error, s*s */
+static unsigned fb_rate = 0;
+static int64_t fb_t    = 0;
+#define FB_KP   (1e6 / 120.0)    /* ppm per second of queue error */
+#define FB_TI   600.0
+#define FB_MAX  1000.0           /* ppm, both ways */
+
+static void fb_steer(unsigned rate)
+{
+    int64_t now = dfx_now_ms();
+    if (fb_t && now - fb_t < 500) return;
+    double dt = fb_t ? (now - fb_t) / 1000.0 : 0.5;
+    fb_t = now;
+    if (dt > 2.0) dt = 0.5;
+
+    snd_pcm_hw_params_t *hw;
+    snd_pcm_hw_params_alloca(&hw);
+    if (snd_pcm_hw_params_current(pcm_playback, hw) < 0) return;
+    snd_pcm_uframes_t bsz = 0;
+    unsigned int orate = 0;
+    int dir = 0;
+    snd_pcm_hw_params_get_buffer_size(hw, &bsz);
+    snd_pcm_hw_params_get_rate(hw, &orate, &dir);
+    snd_pcm_sframes_t q = 0;
+    if (!orate || !bsz || snd_pcm_delay(pcm_playback, &q) < 0) return;
+
+    if (rate != fb_rate) {                       /* new stream: start from the current pitch */
+        fb_rate = rate;
+        int cur = read_sysfs_int("feedback");
+        fb_int = (cur > 0) ? (1e6 - cur) / FB_KP * FB_TI : 0;
+    }
+    double err = ((double)q - (double)bsz * 5.0 / 8.0) / orate;   /* seconds of audio */
+    double ni  = fb_int + err * dt;
+    double ppm = FB_KP * (err + ni / FB_TI);
+    if (ppm > FB_MAX)       ppm = FB_MAX;        /* clamped: do not wind the integral up */
+    else if (ppm < -FB_MAX) ppm = -FB_MAX;
+    else                    fb_int = ni;
+
+    char path[512], v[16];
+    snprintf(path, sizeof path, "%s/feedback", uac_card_path);
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return;
+    int n = snprintf(v, sizeof v, "%u", (unsigned)(1000000.0 - ppm + 0.5));
+    if (write(fd, v, (size_t)n) < 0) { /* nothing to do */ }
+    close(fd);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -685,6 +742,7 @@ int main(void) {
                   current_rate, write_count, xrun_count, cap_xrun_count,
                   fb > 0 ? fb - 1000000 : 0, (long)pb_delay);
         }
+        if (play_started && pcm_playback && !need_prebuffer) fb_steer(current_rate);
         /* ── Uevent: rate change detection ───────────────────────── */
         ssize_t len = recv(uevent_sock, uevent_buf, sizeof(uevent_buf) - 1, MSG_DONTWAIT);
         if (len > 0) {
