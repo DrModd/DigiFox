@@ -294,6 +294,7 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
     snd_pcm_hw_params_set_access(*pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     snd_pcm_hw_params_set_format(*pcm, hw_params, format);
     snd_pcm_hw_params_set_channels(*pcm, hw_params, channels);
+    unsigned int want_rate = rate;
     snd_pcm_hw_params_set_rate_near(*pcm, hw_params, &rate, 0);
 
     /* Cap DSD playback period — RV1106 DMA ignores sub-period writes */
@@ -317,6 +318,17 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
 
     snd_pcm_hw_params_get_period_size(hw_params, &period_size, 0);
     snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_size);
+    {   /* set_rate_near may quietly give another rate: then the output plays slower
+         * than USB delivers (endless USB overruns) — at least say so in the log */
+        unsigned int got = 0;
+        snd_pcm_hw_params_get_rate(hw_params, &got, 0);
+        if (got != want_rate) {
+            char m[128];
+            snprintf(m, sizeof m, "%s %s: asked %u Hz, got %u Hz", stream == SND_PCM_STREAM_CAPTURE ? "USB in" : "output",
+                     device, want_rate, got);
+            evlog_once(m);
+        }
+    }
 
     snd_pcm_sw_params_alloca(&sw_params);
     snd_pcm_sw_params_current(*pcm, sw_params);
