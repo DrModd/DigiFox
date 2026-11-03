@@ -202,7 +202,7 @@ roon)
     # xesam:title/artist/album, mpris:artUrl, Position. Опрашиваем, пока raat_app жив.
     if [ -f /tmp/pfmeta_roon.pid ] && kill -0 "$(cat /tmp/pfmeta_roon.pid)" 2>/dev/null; then exit 0; fi
     echo $$ > /tmp/pfmeta_roon.pid
-    last=""; lst=""
+    last=""; lst=""; pkey=""; fkey=""; fx=1
     while pidof raat_app >/dev/null; do
         r=$(timeout 3 dbus-send --system --print-reply --dest=org.mpris.MediaPlayer2.raat \
               /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.GetAll \
@@ -240,6 +240,23 @@ roon)
                     put raat "$ar" "$ti" "$al" "$cov" "$ms"
                 fi
                 ps=play; [ "$st" = Paused ] && ps=pause
+                # DSD: raat_app считает Position по частоте битов DSD, а не по кадрам
+                # (DSD_U32: позиция идёт в 32 раза медленнее, строка трека стоит на месте).
+                # Множитель находим сами: сколько секунд прошло на самом деле против
+                # прироста Position с начала трека (или с перемотки) -> 1, 8, 16 или 32.
+                case "$pos" in ''|*[!0-9]*) ;; *)
+                    now=$(date +%s)
+                    if [ "$key" != "$pkey" ] || [ "$pos" -lt "${p0:-0}" ] || [ "$ps" != play ] || [ "$lst" != play ]; then
+                        pkey=$key; p0=$pos; t0=$now; [ "$key" != "$fkey" ] && { fkey=$key; fx=1; }
+                    elif [ $((now - t0)) -ge 6 ]; then
+                        fx=$(awk -v dt=$((now - t0)) -v dp=$((pos - p0)) -v f="$fx" 'BEGIN {
+                            r = dp > 0 ? dt * 1000000 / dp : 1000; b = 1; e = 1e9
+                            n = split("1 8 16 32", c, " ")
+                            for (i = 1; i <= n; i++) { d = r / c[i]; if (d < 1) d = 1 / d; if (d < e) { e = d; b = c[i] } }
+                            print (e < 1.3) ? b : f }')
+                    fi
+                    pos=$((pos * ${fx:-1})) ;;
+                esac
                 case "$pos" in ''|*[!0-9]*) [ "$ps" != "$lst" ] && prog 0 $ps ;; *) prog $((pos / 1000)) $ps ;; esac
                 lst=$ps
             fi
