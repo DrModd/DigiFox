@@ -642,7 +642,10 @@ static int make_soxr(dfx_t *d)
     if (d->sx) { soxr_delete(d->sx); d->sx = NULL; }
     if (d->mode != M_PCM && d->mode != M_DSD) return 0;
     int vhq = d->mode == M_PCM &&
-              (d->quality == Q_VHQ || (d->quality == Q_AUTO && d->sx_in <= 384000));
+              (d->quality == Q_VHQ || (d->quality == Q_AUTO && d->sx_in <= 192000));
+    /* auto: VHQ only up to 192 kHz. 352.8/384 kHz -> 192 kHz in VHQ took the whole CPU
+     * (the pump runs at SCHED_FIFO 45): USB overruns, the watchdog starved, the Fox
+     * rebooted and the PC switched to another output. HQ there is inaudibly different. */
     if (d->mode == M_DSD && d->quality == Q_VHQ) vhq = 1;
     unsigned long recipe = (vhq ? SOXR_VHQ : SOXR_HQ) |
         (d->f_phase == 1 ? SOXR_INTERMEDIATE_PHASE : d->f_phase == 2 ? SOXR_MINIMUM_PHASE : SOXR_LINEAR_PHASE) |
