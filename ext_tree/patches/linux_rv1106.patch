@@ -2992,7 +2992,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
  }
  
  /*
-@@ -554,3020 +684,3901 @@
+@@ -554,3020 +684,3912 @@
   */
  static void rockchip_i2s_tdm_tx_fifo_padding(struct rk_i2s_tdm_dev *i2s_tdm, bool en)
  {
@@ -4639,12 +4639,15 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +    dev_info(i2s_tdm->dev, "Current PLL: %u Hz, target: %u Hz (for %u Hz family, target SRC=%u Hz)\n",
 +             pll_freq, ideal_pll, lrck_freq, src_freq);
 +    
-+    if (pll_freq != ideal_pll) {
++    /* DigiFox: compare with a margin (the clock reads back 993484799 for 993484800, the
++     * PLL was re-locked on every stream start) and report a failed change loudly */
++    if (pll_freq > ideal_pll + 1000 || pll_freq + 1000 < ideal_pll) {
 +        ret = clk_set_rate(mclk_root, ideal_pll);
-+        if (ret == 0) {
-+            pll_freq = clk_get_rate(mclk_root);
++        pll_freq = clk_get_rate(mclk_root);
++        if (ret == 0)
 +            dev_info(i2s_tdm->dev, "PLL changed to: %u Hz\n", pll_freq);
-+        }
++        else
++            dev_err(i2s_tdm->dev, "PLL change to %u Hz FAILED (%d), still %u Hz\n", ideal_pll, ret, pll_freq);
 +    }
 +    
 +    ret = clk_set_rate(mclk_parent, src_freq);
@@ -5495,6 +5498,14 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/sound/soc/rockchip/rockchip_i2s_tdm.
 +
 +        dev_info(i2s_tdm->dev, "Clock dividers: mclk_rate=%u, bclk_rate=%u, div_bclk=%u, div_lrck=%u\n",
 +                 mclk_rate, bclk_rate, div_bclk, div_lrck);
++        if (div_bclk && div_lrck) {
++            /* DigiFox: the frame clock that really comes out. A wrong PLL family or a
++             * stale MCLK gives ~1 % off: slow (or fast) and distorted sound */
++            unsigned int lr = mclk_rate / div_bclk / div_lrck, want = params_rate(params);
++            if (lr > want + want / 2000 || lr + want / 2000 < want)
++                dev_err(i2s_tdm->dev, "LRCK will be %u Hz, not %u Hz (MCLK %u, BCLK div %u, LRCK div %u)\n",
++                        lr, want, mclk_rate, div_bclk, div_lrck);
++        }
 +    }
 +
 +    /* Static 1MB buffers are set in rockchip_i2s_tdm_pcm_hardware structure */
