@@ -24,6 +24,15 @@ QOBINE_CARGO_ENV += \
 	CXXFLAGS_x86_64_unknown_linux_gnu="-O2"
 QOBINE_CARGO_BUILD_OPTS = -p connect-module --bin qobine-connect
 
+# stream-download takes its crate docs from ../README.md (include_str!), which is not
+# in its published crate: an empty one lets it compile (the docs are not used)
+define QOBINE_VENDOR_README
+	for c in $(@D)/VENDOR/stream-download*; do \
+		[ -f $$c/README.md ] || : > $$c/README.md; \
+	done
+endef
+QOBINE_POST_PATCH_HOOKS += QOBINE_VENDOR_README
+
 define QOBINE_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 \
 		$$(ls -d $(@D)/target/*/release/qobine-connect $(@D)/target/release/qobine-connect 2>/dev/null | head -1) \
