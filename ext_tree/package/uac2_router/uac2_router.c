@@ -357,7 +357,8 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
     unsigned int lrck_rate = is_dsd ? rate / 32 : rate;
 
     is_current_dsd = is_dsd;
-    dop_cand = !is_dsd && is_dop_rate(rate);
+    /* /etc/digifox/dop-off: no DoP unpacking (PCM passed on as it is, as before 1.0.100) */
+    dop_cand = !is_dsd && is_dop_rate(rate) && access("/etc/digifox/dop-off", F_OK) != 0;
     dop_mode = 0; dop_hits = 0; dop_miss = 0; dop_have = 0;
 
     if (is_dsd)
