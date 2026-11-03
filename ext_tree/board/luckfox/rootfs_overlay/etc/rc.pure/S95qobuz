@@ -17,7 +17,25 @@ restore_mixer() {
     [ -n "$mixer" ] && amixer set "$mixer" unmute 2>/dev/null
 }
 
+# DigiFox: открытый плеер qobine (SofusA/qobine, connect-module) вместо плеера из SDK —
+# пробный, для сравнения. Включить: echo qobine > /etc/digifox/qobuz-engine, вернуть:
+# rm /etc/digifox/qobuz-engine. Процесс тоже называется qobuz-connect.
+QOBINE=/usr/lib/qobine/qobuz-connect
+start_qobine() {
+    mkdir -p /etc/digifox/qobine
+    # база (настройки, вход) — в $HOME/.local/share: держим её среди настроек DigiFox
+    HOME=/etc/digifox/qobine RUST_LOG=info \
+        nice -n -15 $QOBINE --no-login --connect-name DigiFox > /tmp/qobine.log 2>&1 &
+    sleep 3
+    if pidof qobuz-connect >/dev/null; then restore_mixer; return 0; fi
+    echo "$(date '+%d.%m %H:%M:%S') qobuz: qobine не запустился ($(tail -1 /tmp/qobine.log)) — плеер из SDK" >> /tmp/digifox_events.log
+    return 1
+}
+
 start_qobuz() {
+    if [ "$(cat /etc/digifox/qobuz-engine 2>/dev/null)" = qobine ] && [ -x $QOBINE ]; then
+        start_qobine && return 0
+    fi
     output_device="$(get_output_device)"
 
     export LD_PRELOAD=/usr/lib/libassert_hook.so
