@@ -63,6 +63,12 @@ case "$1" in
             . /opt/audio-transition-lock.sh
             run_without_audio_lock_fd sh -c '/etc/init.d/S95* restart' >/dev/null 2>&1 || true
         fi
+        # USB -> I2S: ALSA в работающем роутере помнит старые настройки звука
+        # (в режиме fox без перезапуска — "cannot open digifox", тишина)
+        if [ -x /etc/init.d/S99uac2_router ] && [ -f /etc/usb_to_i2s.state ]; then
+            . /opt/audio-transition-lock.sh
+            run_without_audio_lock_fd /etc/init.d/S99uac2_router restart >/dev/null 2>&1 || true
+        fi
         ;;
     *)
         echo "usage: digifox-srcmode [ak4137|fox|apply]" >&2
