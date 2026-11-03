@@ -118,6 +118,8 @@ cleanup_upper() {
 }
 
 start() {
+    # уже смонтировано (запуск из inittab до rcS, потом ещё раз из rcS)
+    grep -q '^ov-etc /etc overlay ' /proc/mounts && return 0
     : > $LOG
     # в системе без overlay — аварийный выход
     [ -f /data/.overlay-disable ] && { log "отключено: /data/.overlay-disable"; return 0; }
@@ -175,8 +177,19 @@ start() {
     return 0
 }
 
+# Режим USB -> I2S включён (/etc/usb_to_i2s.state), а ссылок на гаджет и роутер нет:
+# обновления до 1.0.106 их стирали (не было в keep.rules) — USB после перезагрузки
+# молчал, хотя в настройках включён. Вернуть до rcS, чтобы они запустились сейчас же.
+heal_usb() {
+    [ -f /etc/usb_to_i2s.state ] || return 0
+    [ -e /etc/init.d/S98uac2 ] && [ -e /etc/init.d/S99uac2_router ] && return 0
+    ln -sf /etc/rc.pure/S98uac2 /etc/init.d/S98uac2 2>/dev/null
+    ln -sf /etc/rc.pure/S95uac2_router /etc/init.d/S99uac2_router 2>/dev/null
+    echo "$(date '+%d.%m %H:%M:%S') storage: USB -> I2S включён, ссылки запуска были стёрты — восстановлены" >> /tmp/digifox_events.log
+}
+
 case "$1" in
-    start) start ;;
+    start) start; heal_usb ;;
     stop)  sync ;;
     *)     echo "Usage: $0 {start|stop}" ;;
 esac

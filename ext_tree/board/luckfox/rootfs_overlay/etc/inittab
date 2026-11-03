@@ -24,6 +24,11 @@ null::sysinit:/bin/ln -sf /proc/self/fd /dev/fd
 null::sysinit:/bin/ln -sf /proc/self/fd/0 /dev/stdin
 null::sysinit:/bin/ln -sf /proc/self/fd/1 /dev/stdout
 null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
+# DigiFox: система только для чтения — overlay на /etc /usr ... ДО rcS. rcS берёт
+# список /etc/init.d/S??* один раз в начале: если overlay монтировался внутри rcS
+# (S00overlay), то ссылки на плееры/USB, созданные уже на userdata, при загрузке не
+# запускались. S00overlay, вызванный потом из rcS, видит, что всё смонтировано.
+::sysinit:/etc/init.d/S00overlay start
 ::sysinit:/bin/hostname -F /etc/hostname
 # now run any rc scripts
 ::sysinit:/etc/init.d/rcS

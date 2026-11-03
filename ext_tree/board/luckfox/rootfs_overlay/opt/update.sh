@@ -143,6 +143,9 @@ protect /etc/asound.conf
 protect /etc/output
 protect /etc/usb_to_i2s.state
 protect /etc/init.d/S95*
+protect /etc/init.d/S98uac2
+protect /etc/init.d/S99uac2_router
+protect /etc/dlna_bridge.conf
 protect /etc/shadow
 protect /etc/digifox/
 protect /etc/digifox/**
