@@ -239,6 +239,15 @@ static int create_uevent_socket(void) {
 
 /* ── PCM setup ────────────────────────────────────────────────────── */
 
+/* the same failure again and again (reopen loop): log it once */
+static void evlog_once(const char *msg)
+{
+    static char last[128];
+    if (strncmp(last, msg, sizeof last - 1) == 0) return;
+    snprintf(last, sizeof last, "%s", msg);
+    evlog("%s", msg);
+}
+
 static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t stream,
                      unsigned int rate, snd_pcm_format_t format, unsigned int channels,
                      int is_dsd)
@@ -273,6 +282,10 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
 
     if ((err = snd_pcm_open(pcm, device, stream, 0)) < 0) {
         fprintf(stderr, "Cannot open %s: %s\n", device, snd_strerror(err));
+        char m[128];
+        snprintf(m, sizeof m, "cannot open %s (%s): %s", device,
+                 stream == SND_PCM_STREAM_CAPTURE ? "USB in" : "output", snd_strerror(err));
+        evlog_once(m);
         return err;
     }
 
@@ -293,6 +306,10 @@ static int setup_pcm(snd_pcm_t **pcm, const char *device, snd_pcm_stream_t strea
 
     if ((err = snd_pcm_hw_params(*pcm, hw_params)) < 0) {
         fprintf(stderr, "Cannot set hw params for %s: %s\n", device, snd_strerror(err));
+        char m[128];
+        snprintf(m, sizeof m, "%s %s: %u Hz %s not accepted: %s", stream == SND_PCM_STREAM_CAPTURE ? "USB in" : "output",
+                 device, rate, snd_pcm_format_name(format), snd_strerror(err));
+        evlog_once(m);
         snd_pcm_close(*pcm);
         *pcm = NULL;
         return err;
@@ -350,8 +367,17 @@ static int configure_audio(unsigned int rate, int card, char **buffer, size_t *b
     lvl_on = lvl_cfg && amp_vu_on();
     if (setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
                   lrck_rate, i2s_format, I2S_CHANNELS, is_dsd) < 0) {
-        close_pcms();
-        return -1;
+        /* 705.6/768 kHz PCM is often beyond the I2S (MCLK), while the same rate as
+         * DoP (DSD256/512) plays as native DSD at half the frame rate: open that */
+        if (dop_cand && setup_pcm(&pcm_playback, i2s_device(), SND_PCM_STREAM_PLAYBACK,
+                                  rate / 2, I2S_FORMAT_DSD, I2S_CHANNELS, 1) == 0) {
+            dop_mode = 1;
+            lvl_cfg = lvl_on = 0;
+            evlog("PCM %u Hz is not possible on the output: expecting DoP, output native DSD", rate);
+        } else {
+            close_pcms();
+            return -1;
+        }
     }
 
     /* Read negotiated period sizes */
@@ -634,8 +660,12 @@ int main(void) {
                            current_rate, rate, write_count, xrun_count);
                     evlog("rate %u -> %d Hz, output %s (writes %lu, xruns %lu)",
                           current_rate, rate, i2s_device(), write_count, xrun_count);
-                    if (configure_audio(rate, uac_card, &buffer, &buffer_size, &period_size) == 0) {
-                        current_rate = rate;
+                    int cfg_ok = configure_audio(rate, uac_card, &buffer, &buffer_size, &period_size) == 0;
+                    /* the host sends this rate now: never reopen at the old one (that gave
+                     * endless USB overruns at 352.8 kHz while the host sent 705.6 kHz) */
+                    current_rate = rate;
+                    if (!cfg_ok) { char m[64]; snprintf(m, sizeof m, "cannot play %d Hz, retrying", rate); evlog_once(m); }
+                    if (cfg_ok) {
                         pb_period = playback_period;
                         /* Reallocate accumulation and pre-buffer */
                         free(accum_buf);
@@ -659,7 +689,9 @@ int main(void) {
             usleep(100000);
             if (current_rate > 0) {
                 printf("[REOPEN] Reconfiguring at %u Hz\n", current_rate);
-                if (configure_audio(current_rate, uac_card, &buffer, &buffer_size, &period_size) == 0) {
+                if (configure_audio(current_rate, uac_card, &buffer, &buffer_size, &period_size) != 0) {
+                    usleep(1000000);            /* rate the output refuses: retry slowly */
+                } else {
                     pb_period = playback_period;
                     free(accum_buf);
                     accum_buf = malloc(pb_period * frame_bytes);
