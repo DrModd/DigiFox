@@ -587,8 +587,13 @@ static int prebuffer_from_capture(char *cap_buf, snd_pcm_uframes_t cap_period,
 static double  fb_int  = 0;      /* integral of the error, s*s */
 static unsigned fb_rate = 0;
 static int64_t fb_t    = 0;
-#define FB_KP   (1e6 / 120.0)    /* ppm per second of queue error */
-#define FB_TI   600.0
+/* 1.0.120: faster (20 s / Ti 60 s, still overdamped-ish, zeta ~0.9) and the error is
+ * the WHOLE backlog (USB capture buffer + I2S queue): the pre-buffer after an underrun
+ * only moves frames from one to the other, so it no longer kicks the integral. Start at
+ * the nominal rate: taking the gadget PI's pinned value as the start (as 1.0.114 did)
+ * kept the host 500-1000 ppm slow at 384 kHz — an I2S underrun every ~47 s. */
+#define FB_KP   (1e6 / 20.0)     /* ppm per second of backlog error */
+#define FB_TI   60.0
 #define FB_MAX  1000.0           /* ppm, both ways */
 
 static void fb_steer(unsigned rate)
@@ -610,12 +615,23 @@ static void fb_steer(unsigned rate)
     snd_pcm_sframes_t q = 0;
     if (!orate || !bsz || snd_pcm_delay(pcm_playback, &q) < 0) return;
 
-    if (rate != fb_rate) {                       /* new stream: start from the current pitch */
+    if (rate != fb_rate) {                       /* new stream: start from the nominal rate */
         fb_rate = rate;
-        int cur = read_sysfs_int("feedback");
-        fb_int = (cur > 0) ? (1e6 - cur) / FB_KP * FB_TI : 0;
+        fb_int = 0;
     }
-    double err = ((double)q - (double)bsz * 5.0 / 8.0) / orate;   /* seconds of audio */
+    /* USB capture backlog, in seconds at the capture rate */
+    double cap_s = 0;
+    {
+        snd_pcm_hw_params_t *ch;
+        snd_pcm_hw_params_alloca(&ch);
+        unsigned int crate = 0;
+        int cdir = 0;
+        snd_pcm_sframes_t ca = pcm_capture ? snd_pcm_avail(pcm_capture) : 0;
+        if (pcm_capture && ca > 0 && snd_pcm_hw_params_current(pcm_capture, ch) == 0 &&
+            snd_pcm_hw_params_get_rate(ch, &crate, &cdir) == 0 && crate)
+            cap_s = (double)ca / crate;
+    }
+    double err = (double)q / orate + cap_s - ((double)bsz / 2.0) / orate;   /* seconds of audio */
     double ni  = fb_int + err * dt;
     double ppm = FB_KP * (err + ni / FB_TI);
     if (ppm > FB_MAX)       ppm = FB_MAX;        /* clamped: do not wind the integral up */
