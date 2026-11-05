@@ -1169,7 +1169,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  #define MIN_PERIODS	4
  
  enum {
-@@ -50,6 +50,10 @@
+@@ -50,6 +50,11 @@
  	void *rbuf;
  
  	unsigned int pitch;	/* Stream pitch ratio to 1000000 */
@@ -1177,6 +1177,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +	long fb_err_smooth;	/* EMA-filtered error for P-term */
 +	unsigned long fb_freeze;/* Freeze PI for N feedback cycles */
 +	unsigned long fb_freeze_grace;/* Grace period: suppress emergency unfreeze */
++	unsigned int dbg_out, dbg_fb;	/* DigiFox: first packets of a stream logged */
  	unsigned int max_psize;	/* MaxPacketSize of endpoint */
  
  	struct usb_request **reqs;
@@ -1202,12 +1203,18 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  static void u_audio_set_fback_frequency(enum usb_device_speed speed,
  					struct usb_ep *out_ep,
  					unsigned long long freq,
-@@ -258,19 +268,43 @@
+@@ -258,19 +268,49 @@
  			       req->actual);
  		}
  	} else {
 -		if (unlikely(pending < req->actual)) {
 +		unsigned int actual = req->actual;
++
++		if (prm->dbg_out < 6) {		/* DigiFox: first packets of a stream */
++			prm->dbg_out++;
++			dev_info(uac->card->dev, "OUT #%u: status %d, %u bytes, srate %d\n",
++				 prm->dbg_out, req->status, req->actual, (int)prm->srate);
++		}
 +
 +		/*
 +		 * Frame alignment guard: DSD is destroyed by even one
@@ -1249,7 +1256,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	snd_pcm_stream_unlock(substream);
  
  	if ((hw_ptr % snd_pcm_lib_period_bytes(substream)) < req->actual)
-@@ -299,14 +333,117 @@
+@@ -299,14 +333,129 @@
  	if (req->status == -ESHUTDOWN)
  		return;
  
@@ -1261,6 +1268,18 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  		pr_debug("%s: iso_complete status(%d) %d/%d\n",
  			__func__, status, req->actual, req->length);
  
++	/* DigiFox: the first feedback packets of a stream (Windows gives up on some
++	 * 352.8 kHz streams within 30 ms — what did it get from us?) */
++	if (prm->dbg_fb < 6) {
++		const u8 *fb = req->buf;
++
++		prm->dbg_fb++;
++		dev_info(prm->uac->card->dev,
++			 "FB #%u: status %d, %u/%u bytes, srate %d, pitch %u, sent %02x %02x %02x %02x\n",
++			 prm->dbg_fb, status, req->actual, req->length, (int)prm->srate,
++			 prm->pitch, fb[0], fb[1], fb[2], fb[3]);
++	}
++
 +	/*
 +	 * Adaptive feedback: PI controller for hi-end audio.
 +	 *
@@ -1534,7 +1553,7 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
  	ep_fback = audio_dev->in_ep_fback;
  	if (!ep_fback)
  		return 0;
-@@ -689,10 +927,13 @@
+@@ -689,10 +927,17 @@
  
  	/*
  	 * Configure the feedback endpoint's reported frequency.
@@ -1547,6 +1566,10 @@ diff -urN linux-rockchip-rk-6.1-rkr6.1_orig/drivers/usb/gadget/function/u_audio.
 +	prm->fb_err_smooth = 0;
 +	prm->fb_freeze = 0;
 +	prm->fb_freeze_grace = 0;
++	prm->dbg_out = 0;
++	prm->dbg_fb = 0;
++	dev_info(uac->card->dev, "capture start: srate %d, max_psize %u, speed %d\n",
++		 (int)prm->srate, prm->max_psize, audio_dev->gadget->speed);
  	u_audio_set_fback_frequency(audio_dev->gadget->speed, ep,
  				    prm->srate, prm->pitch,
  				    req_fback->buf);
