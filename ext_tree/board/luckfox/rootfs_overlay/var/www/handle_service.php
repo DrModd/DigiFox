@@ -84,6 +84,9 @@ if (!$lockFp) {
 try {
     logMessage("Request to start player: $playerToStart");
 
+    // DSD, оборванный посреди потока, щёлкает: сначала приглушить усилитель (режим АК)
+    executeCommand('/usr/bin/amp-hush 2000');
+
     if (file_exists('/etc/usb_to_i2s.state')) {
         executeCommand('/opt/usb_unlock.sh');
     }

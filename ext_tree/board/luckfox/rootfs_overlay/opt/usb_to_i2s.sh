@@ -6,6 +6,9 @@
 MODE_FILE="/etc/usb_to_i2s.state"
 MODULES_DIR="/lib/modules"
 
+# DSD, оборванный посреди потока, щёлкает: сначала приглушить усилитель
+/usr/bin/amp-hush 2000
+
 # Stop all running players and remove symlinks
 run_without_audio_lock_fd sh -c '/etc/init.d/S95* stop' 2>/dev/null || true
 rm -f /etc/init.d/S95*

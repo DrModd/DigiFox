@@ -6,6 +6,9 @@
 MODE_FILE="/etc/usb_to_i2s.state"
 UDC_SYSFS="/sys/kernel/config/usb_gadget"
 
+# DSD, оборванный посреди потока, щёлкает: сначала приглушить усилитель
+/usr/bin/amp-hush 2000
+
 # Clear mode file
 rm -f "$MODE_FILE"
 
