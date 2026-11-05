@@ -91,6 +91,13 @@
         }
 
         renderVol(amp);
+        // CLIP GUARD и приглушение экрана — прошивка усилителя 1.15+
+        var newCfg = amp && amp.cfg && amp.cfg.clipg !== undefined;
+        ['clipg', 'dim'].forEach(function (k) {
+            var bs = document.querySelectorAll('[data-k="' + k + '"]');
+            for (var n = 0; n < bs.length; n++) if (!newCfg) bs[n].disabled = true;
+        });
+        $('prot-hint').textContent = amp && amp.cfg && !newCfg ? 'Нужна прошивка усилителя 1.15 или новее (раздел «Прошивка усилителя» ниже).' : '';
 
         // sleep timer
         var left = S ? S.sleep_left : 0;

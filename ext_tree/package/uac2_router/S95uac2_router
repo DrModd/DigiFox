@@ -22,8 +22,22 @@ start() {
         return 1
     fi
 
-    start-stop-daemon -S -q -b -m -p $PIDFILE --exec $DAEMON
-    if [ $? = 0 ]; then
+    # DigiFox: под присмотром — роутер завис (сторож внутри выходит с кодом 3)
+    # или упал — запустить снова; выход 0 (stop) — конец. Больше 5 перезапусков
+    # за минуту — пауза 10 с, чтобы не крутиться.
+    start-stop-daemon -S -q -b -m -p $PIDFILE --exec /bin/sh -- -c '
+        n=0; t0=$(date +%s)
+        while :; do
+            '$DAEMON'; rc=$?
+            [ $rc = 0 ] && break
+            echo "$(date "+%d.%m %H:%M:%S") USB router: exited ($rc), restarting" >> /tmp/digifox_events.log
+            now=$(date +%s)
+            if [ $((now - t0)) -ge 60 ]; then n=0; t0=$now; fi
+            n=$((n + 1)); [ $n -gt 5 ] && sleep 10
+            sleep 1
+        done'
+    rc=$?
+    if [ $rc = 0 ]; then
         echo "OK"
     else
         echo "FAIL"
@@ -33,7 +47,9 @@ start() {
 stop() {
     printf "Stopping UAC2 router: "
     start-stop-daemon -K -q -p $PIDFILE
-    if [ $? = 0 ]; then
+    rc=$?
+    killall -TERM uac2_router 2>/dev/null     # сам роутер (присмотр уже остановлен)
+    if [ $rc = 0 ]; then
         rm -f $PIDFILE
         echo "OK"
     else

@@ -23,6 +23,9 @@ restore_mixer() {
 QOBINE=/usr/lib/qobine/qobuz-connect
 start_qobine() {
     mkdir -p /etc/digifox/qobine
+    # название трека (/tmp/nowplaying, /tmp/np_prog) и управление (FIFO /tmp/qobuz_ctl)
+    # qobine пишет сам (патч DigiFox в package/qobine) — pfmeta не нужен
+    rm -f /tmp/nowplaying /tmp/np_prog
     # база (настройки, вход) — в $HOME/.local/share: держим её среди настроек DigiFox
     HOME=/etc/digifox/qobine RUST_LOG=info \
         nice -n -15 $QOBINE --no-login --connect-name DigiFox > /tmp/qobine.log 2>&1 &

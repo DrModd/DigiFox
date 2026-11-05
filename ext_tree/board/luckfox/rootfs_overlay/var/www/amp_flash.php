@@ -1,20 +1,19 @@
 <?php
 // amp_flash.php — обновление прошивки усилителя DigiD D1 из веб-интерфейса.
 //   POST multipart fw=<файл .bin>  -> текстовый журнал digifox-ampflash (по мере выполнения)
-//   POST builtin=1                 -> прошивка, встроенная в DigiFox (/usr/share/digifox/amp-fw.bin)
+//   POST builtin=1                 -> прошивка, встроенная в DigiFox (/usr/share/digifox/amp-fw/<экран>.bin)
 header('Content-Type: text/plain; charset=utf-8');
 header('Cache-Control: no-store');
 header('X-Accel-Buffering: no');
 
-$builtin = '/usr/share/digifox/amp-fw.bin';
 $bin = '/tmp/amp_fw.bin';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['builtin'] ?? '') === '1') {
-    $bdisp = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.disp'));
-    if ($bdisp === '') $bdisp = 'st7789';
+    // встроенная прошивка — для экрана этого усилителя (amp-fw/<экран>.bin)
     $disp = trim((string)@file_get_contents('/tmp/amp_disp'));
     if ($disp === '') $disp = 'st7789';
-    if ($disp !== $bdisp) {
-        echo "ОШИБКА: встроенная прошивка — для экрана " . strtoupper($bdisp) . ", а у усилителя " . strtoupper($disp) . ". Прошейте файл .bin для своего экрана\n";
+    $builtin = preg_match('/^[a-z0-9]+$/', $disp) ? '/usr/share/digifox/amp-fw/' . $disp . '.bin' : '';
+    if ($builtin === '' || !is_file($builtin)) {
+        echo "ОШИБКА: в DigiFox нет встроенной прошивки для экрана " . strtoupper($disp) . ". Прошейте файл .bin для своего экрана\n";
         exit;
     }
     if (!is_file($builtin) || !@copy($builtin, $bin)) {

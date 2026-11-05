@@ -70,6 +70,22 @@
         </div>
     </section>
 
+    <!-- Protection and screen (amplifier firmware 1.15+) -->
+    <section class="panel">
+        <div class="cap">ЗАЩИТА И ЭКРАН</div>
+        <div class="set-label">CLIP GUARD — при клиппинге убавить на 3 dB</div>
+        <div class="row2 tight">
+            <button class="hifi" data-k="clipg" data-v="0">ВЫКЛ</button>
+            <button class="hifi" data-k="clipg" data-v="1">−3 dB</button>
+        </div>
+        <div class="set-label">Приглушать экран через 30 с без действий</div>
+        <div class="row2 tight">
+            <button class="hifi" data-k="dim" data-v="0">ВЫКЛ</button>
+            <button class="hifi" data-k="dim" data-v="1">ВКЛ</button>
+        </div>
+        <div class="hint" id="prot-hint"></div>
+    </section>
+
     <!-- Volume limits (amplifier firmware 1.3+) -->
     <section class="panel">
         <div class="cap">ГРОМКОСТЬ</div>

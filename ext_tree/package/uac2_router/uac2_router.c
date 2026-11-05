@@ -187,6 +187,46 @@ static snd_pcm_uframes_t playback_period = 1024;
 
 static void sighandler(int sig) { running = 0; }
 
+/* ── Watchdog (DigiFox) ───────────────────────────────────────────
+ * While playing, the main loop passes many times a second and the writes to
+ * the I2S keep growing. If it is stuck inside an ALSA call (the I2S DMA
+ * stopped, the USB gadget wedged) or the writes stop for WD_STUCK_MS, the
+ * router logs why and exits with 3: S95uac2_router starts it again — a short
+ * pause instead of silence until a reboot. Its thread is SCHED_FIFO 75,
+ * above the loop (70), so it runs even if the loop spins. */
+#include <pthread.h>
+#define WD_STUCK_MS 5000
+static volatile int64_t       wd_beat;     /* last pass of the main loop */
+static volatile int           wd_play;     /* playing (not waiting for the host) */
+static volatile unsigned long wd_writes;   /* periods written to the I2S */
+static volatile unsigned      wd_rate;
+
+static void *wd_thread(void *arg)
+{
+    (void)arg;
+    struct sched_param sp = { .sched_priority = 75 };
+    pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+    unsigned long last_w = 0;
+    int64_t w_t = dfx_now_ms();
+    while (running) {
+        usleep(500000);
+        int64_t now = dfx_now_ms();
+        unsigned long w = wd_writes;
+        if (w != last_w || !wd_play) { last_w = w; w_t = now; }
+        if (!wd_play) continue;
+        int64_t beat = now - wd_beat, idle = now - w_t;
+        if (beat >= WD_STUCK_MS || idle >= WD_STUCK_MS) {
+            evlog("watchdog: %s for %lld ms at %u Hz (writes %lu): restarting the router",
+                  beat >= WD_STUCK_MS ? "stuck in an ALSA call" : "no writes to the I2S",
+                  (long long)(beat >= WD_STUCK_MS ? beat : idle), wd_rate, w);
+            fprintf(stderr, "[WATCHDOG] stuck, exiting\n");
+            amp_hush(1500);
+            _exit(3);
+        }
+    }
+    return NULL;
+}
+
 /* ── DSD helpers ──────────────────────────────────────────────────── */
 
 static int is_dsd_rate(unsigned int rate) {
@@ -729,7 +769,12 @@ int main(void) {
 
     evlog_start();               /* writer thread: no file I/O at FIFO 70 */
     evlog("router started (output %s)", i2s_device());
-    time_t hb_t = time(NULL), spin_t = time(NULL);
+    wd_beat = dfx_now_ms();
+    {
+        pthread_t wt;
+        if (pthread_create(&wt, NULL, wd_thread, NULL) == 0) pthread_detach(wt);
+    }
+    time_t hb_t = time(NULL), spin_t = time(NULL), rate_t = time(NULL);
     unsigned long spin_n = 0;
 
     while (running) {
@@ -737,6 +782,10 @@ int main(void) {
          * interrupt threads. If it ever spins without blocking, the whole Fox
          * freezes. Count passes per second and back off when it spins. */
         spin_n++;
+        wd_beat   = dfx_now_ms();
+        wd_play   = play_started && !need_prebuffer && pcm_playback != NULL;
+        wd_writes = write_count;
+        wd_rate   = current_rate;
         time_t now_t = time(NULL);
         if (now_t != spin_t) {
             if (spin_n > 20000) {
@@ -761,15 +810,31 @@ int main(void) {
         if (play_started && pcm_playback && !need_prebuffer) fb_steer(current_rate);
         /* ── Uevent: rate change detection ───────────────────────── */
         ssize_t len = recv(uevent_sock, uevent_buf, sizeof(uevent_buf) - 1, MSG_DONTWAIT);
+        int rate_check = 0;
         if (len > 0) {
             uevent_buf[len] = '\0';
-            if (strstr(uevent_buf, "u_audio") && strstr(uevent_buf, uac_card_name)) {
+            rate_check = strstr(uevent_buf, "u_audio") && strstr(uevent_buf, uac_card_name);
+        }
+        /* DigiFox: once a second also compare with the rate the host set. A missed
+         * uevent left the I2S at the old rate while the host sent another one —
+         * slow, distorted sound (seen at 352.8 kHz) until the next track */
+        if (!rate_check && now_t != rate_t) {
+            rate_t = now_t;
+            int r = read_sysfs_int(SYSFS_RATE_FILE);
+            if (r > 0 && current_rate > 0 && r != (int)current_rate) {
+                evlog("host rate is %d Hz, the I2S runs at %u Hz (missed the change): reconfiguring", r, current_rate);
+                rate_check = 1;
+            }
+        }
+        if (rate_check) {
+            {
                 rate = read_sysfs_int(SYSFS_RATE_FILE);
                 if (rate > 0 && rate != (int)current_rate) {
                     printf("\n[CHANGE] %u -> %u Hz (w=%lu x=%lu)\n",
                            current_rate, rate, write_count, xrun_count);
                     evlog("rate %u -> %d Hz, output %s (writes %lu, xruns %lu)",
                           current_rate, rate, i2s_device(), write_count, xrun_count);
+                    wd_play = 0;                 /* reconfiguring can take a while */
                     if (pcm_playback) amp_hush_before();
                     int cfg_ok = configure_audio(rate, uac_card, &buffer, &buffer_size, &period_size) == 0;
                     /* the host sends this rate now: never reopen at the old one (that gave
@@ -975,6 +1040,7 @@ int main(void) {
         dop_mode = !dop_mode; dop_hits = 0; dop_miss = 0; dop_have = 0;
         evlog("%s at %u Hz: I2S output %s", dop_mode ? "DoP detected" : "DoP ended",
               current_rate, dop_mode ? "native DSD" : "PCM");
+        wd_play = 0;
         amp_hush_before();
         if (reopen_playback(current_rate, dop_mode) < 0) {
             evlog("DoP: cannot reopen the I2S output, back to PCM");

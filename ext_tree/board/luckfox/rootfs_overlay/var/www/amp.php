@@ -40,7 +40,7 @@ $cfg_dir    = '/etc/digifox';
 $alarm_file = $cfg_dir . '/alarm.conf';
 $tz_file    = $cfg_dir . '/tz';
 $sleep_file = '/tmp/sleep_at';
-$cfg_keys   = ['filter', 'delay', 'dsdgain', 'standby', 'autoon', 'mode', 'vmax', 'von'];  // vmax/von: прошивка 1.3+
+$cfg_keys   = ['filter', 'delay', 'dsdgain', 'standby', 'autoon', 'mode', 'vmax', 'von', 'dim', 'clipg'];  // vmax/von: 1.3+, dim/clipg: 1.15+
 
 function tz_get($f) {
     $t = trim((string)@file_get_contents($f));
@@ -155,12 +155,13 @@ if (isset($_GET['full'])) {
     // прошивка усилителя, встроенная в DigiFox: предложить, если новее установленной
     $bv = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.ver'));
     $out['fw_builtin'] = $bv !== '' ? $bv : null;
-    // встроенная прошивка собрана под один экран (amp-fw.disp): усилителю с другим экраном не предлагать
-    $bdisp = trim((string)@file_get_contents('/usr/share/digifox/amp-fw.disp'));
-    if ($bdisp === '') $bdisp = 'st7789';
+    // встроенные прошивки — по одной на экран: /usr/share/digifox/amp-fw/<экран>.bin
+    // (экран сообщает сам усилитель: "aver 1.15 st7796"); для своего экрана нет — не предлагать
     $disp = trim((string)@file_get_contents('/tmp/amp_disp'));
     $out['disp'] = $disp !== '' ? $disp : 'st7789';
-    $out['fw_update'] = $bv !== '' && $st !== null && $out['disp'] === $bdisp &&
+    $have = preg_match('/^[a-z0-9]+$/', $out['disp']) && is_file('/usr/share/digifox/amp-fw/' . $out['disp'] . '.bin');
+    if (!$have) $out['fw_builtin'] = null;
+    $out['fw_update'] = $have && $bv !== '' && $st !== null &&
                         ($v === '' || version_compare($bv, $v, '>'));
     $tz = tz_get($tz_file);
     $out['tz'] = $tz;

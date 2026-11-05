@@ -42,7 +42,7 @@
 #   avol <pos> <max> <mute> <db> <power>
 #                     от усилителя (STM32): его состояние. Сохраняется
 #                     в /tmp/amp_state для приложения (amp.php). Ответа нет.
-#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von> [<vu>]]
+#   acfg <filter> <delay> <dsdgain> <standby> <autoon> <mode> [<vmax> <von> [<vu> [<dim> <clipg>]]]
 #                     от усилителя: настройки -> /tmp/amp_cfg, vu -> /tmp/amp_vu
 #                     (стрелочные индикаторы: pfrate шлёт @LVL). Ответа нет.
 #   aver <версия> [экран]  от усилителя: версия -> /tmp/amp_ver, экран (st7789,
@@ -151,7 +151,8 @@ do_cmd() {
             echo "$2 $3 $4 $5 ${6:-1} $(date +%s)" > /tmp/amp_state.tmp && mv /tmp/amp_state.tmp /tmp/amp_state
             ;;
         acfg) # настройки усилителя от STM32 (9-е — стрелочные индикаторы на экране)
-            echo "$2 $3 $4 $5 $6 $7 $8 $9" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg
+            # 10-е и 11-е (прошивка 1.15) — приглушение экрана и CLIP GUARD: в amp_cfg после von
+            echo "$2 $3 $4 $5 $6 $7 $8 $9 ${11} ${12}" > /tmp/amp_cfg.tmp && mv /tmp/amp_cfg.tmp /tmp/amp_cfg
             vu=${10}
             [ "$vu" = 1 ] || vu=0
             if [ "$vu" != "$(cat /tmp/amp_vu 2>/dev/null)" ]; then

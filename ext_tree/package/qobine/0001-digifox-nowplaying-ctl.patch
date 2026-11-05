@@ -1,0 +1,199 @@
+From add9d35e587311788e72d6553b4fe873a0e0fb4d Mon Sep 17 00:00:00 2001
+From: DigiFox <digifox@local>
+Date: Thu, 5 Nov 2026 08:06:23 +0300
+Subject: [PATCH] DigiFox: now playing files and control FIFO
+
+---
+ connect-module/src/digifox.rs | 157 ++++++++++++++++++++++++++++++++++
+ connect-module/src/main.rs    |   4 +
+ 2 files changed, 161 insertions(+)
+ create mode 100644 connect-module/src/digifox.rs
+
+diff --git a/connect-module/src/digifox.rs b/connect-module/src/digifox.rs
+new file mode 100644
+index 0000000..6887ea6
+--- /dev/null
++++ b/connect-module/src/digifox.rs
+@@ -0,0 +1,157 @@
++//! DigiFox: what is playing for the amplifier screen and the Fox Remote app,
++//! and play/pause/next/prev from the remote, the app and the web page.
++//!
++//! Writes the files the other DigiFox players write (see /usr/bin/pfmeta):
++//!   /tmp/nowplaying  player, artist, title, album, cover URL, duration ms (one per line)
++//!   /tmp/np_prog     "<position ms> <unix time s> play|pause"
++//! and reads commands (toggle, next, prev, play, pause) from the FIFO /tmp/qobuz_ctl,
++//! the same one player_ctl.php writes to for the SDK player.
++
++use controls_module::{
++    PositionReceiver, Status, StatusReceiver, TracklistReceiver, controls::Controls,
++};
++use std::io::{BufRead, BufReader};
++use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
++
++const NOWPLAYING: &str = "/tmp/nowplaying";
++const PROG: &str = "/tmp/np_prog";
++const CTL_FIFO: &str = "/tmp/qobuz_ctl";
++
++fn write_atomic(path: &str, data: &str) {
++    let tmp = format!("{path}.qobine");
++    if std::fs::write(&tmp, data).is_ok() {
++        _ = std::fs::rename(&tmp, path);
++    }
++}
++
++fn line(s: &str) -> String {
++    s.replace(['\n', '\r'], " ")
++}
++
++fn unix_s() -> u64 {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map(|d| d.as_secs())
++        .unwrap_or(0)
++}
++
++pub fn spawn(
++    controls: Controls,
++    tracklist: TracklistReceiver,
++    status: StatusReceiver,
++    position: PositionReceiver,
++) {
++    spawn_meta(tracklist, status, position);
++    spawn_ctl(controls);
++}
++
++fn spawn_meta(
++    mut tracklist: TracklistReceiver,
++    mut status: StatusReceiver,
++    mut position: PositionReceiver,
++) {
++    tokio::spawn(async move {
++        let mut last_key = String::new();
++        let mut last_play: Option<bool> = None;
++        // last written position and when: a seek is a jump from the expected one
++        let mut w_pos: u64 = 0;
++        let mut w_at = Instant::now();
++        loop {
++            let (key, np) = {
++                let tl = tracklist.borrow();
++                match tl.current_track() {
++                    Some(t) => (
++                        format!("{}", t.id),
++                        Some(format!(
++                            "qobuz\n{}\n{}\n{}\n{}\n{}\n",
++                            line(t.artist_name.as_deref().unwrap_or("")),
++                            line(&t.title),
++                            line(t.album_title.as_deref().unwrap_or("")),
++                            line(t.image.as_deref().unwrap_or("")),
++                            u64::from(t.duration_seconds) * 1000
++                        )),
++                    ),
++                    None => (String::new(), None),
++                }
++            };
++            let play = matches!(*status.borrow(), Status::Playing);
++            let pos = u64::try_from(position.borrow().as_millis()).unwrap_or(0);
++
++            let mut write_prog = false;
++            if key != last_key {
++                last_key.clone_from(&key);
++                match np {
++                    Some(s) => {
++                        write_atomic(NOWPLAYING, &s);
++                        write_prog = true;
++                    }
++                    None => {
++                        _ = std::fs::remove_file(NOWPLAYING);
++                        _ = std::fs::remove_file(PROG);
++                        last_play = None;
++                    }
++                }
++            }
++            if !last_key.is_empty() {
++                if last_play != Some(play) {
++                    write_prog = true;
++                }
++                let expected = if last_play == Some(true) {
++                    w_pos + u64::try_from(w_at.elapsed().as_millis()).unwrap_or(0)
++                } else {
++                    w_pos
++                };
++                if pos.abs_diff(expected) > 2000 {
++                    write_prog = true; // seek, or the clock drifted
++                }
++                if write_prog {
++                    let st = if play { "play" } else { "pause" };
++                    write_atomic(PROG, &format!("{pos} {} {st}\n", unix_s()));
++                    w_pos = pos;
++                    w_at = Instant::now();
++                    last_play = Some(play);
++                }
++            }
++
++            tokio::select! {
++                r = tracklist.changed() => if r.is_err() { break },
++                r = status.changed() => if r.is_err() { break },
++                r = position.changed() => if r.is_err() { break },
++            }
++            // position ticks often: no more than a few checks a second
++            tokio::time::sleep(Duration::from_millis(250)).await;
++        }
++    });
++}
++
++fn spawn_ctl(controls: Controls) {
++    std::thread::spawn(move || {
++        _ = std::fs::remove_file(CTL_FIFO);
++        let made = std::process::Command::new("mkfifo")
++            .arg(CTL_FIFO)
++            .status()
++            .map(|s| s.success())
++            .unwrap_or(false);
++        if !made {
++            tracing::warn!("digifox: no control FIFO {CTL_FIFO}");
++            return;
++        }
++        loop {
++            // blocks until a writer opens it (echo next > /tmp/qobuz_ctl)
++            let Ok(f) = std::fs::File::open(CTL_FIFO) else {
++                std::thread::sleep(Duration::from_secs(1));
++                continue;
++            };
++            for cmd in BufReader::new(f).lines().map_while(Result::ok) {
++                match cmd.trim() {
++                    "toggle" | "playpause" => controls.play_pause(),
++                    "play" => controls.play(),
++                    "pause" => controls.pause(),
++                    "next" => controls.next(),
++                    "prev" | "previous" => controls.previous(),
++                    _ => {}
++                }
++            }
++        }
++    });
++}
+diff --git a/connect-module/src/main.rs b/connect-module/src/main.rs
+index fd6be97..868632e 100644
+--- a/connect-module/src/main.rs
++++ b/connect-module/src/main.rs
+@@ -13,6 +13,8 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+ 
+ use clap::Parser;
+ 
++mod digifox;
++
+ #[derive(Parser)]
+ #[clap(author, about, long_about = None)]
+ struct Arguments {
+@@ -110,6 +112,8 @@ pub async fn run() -> AppResult<()> {
+         });
+     }
+ 
++    digifox::spawn(player.controls(), player.tracklist(), player.status(), player.position());
++
+     {
+         let client = client.clone();
+         let position_receiver = player.position();
+-- 
+2.43.0
+
