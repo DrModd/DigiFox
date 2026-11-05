@@ -6,6 +6,7 @@
 [ "$(cat /etc/digifox/srcmode 2>/dev/null)" = fox ] && exit 0
 [ -c /dev/ttyS2 ] || exit 0
 ms=${1:-1500}
-printf '@HUSH %s\n' "$ms" > /dev/ttyS2 2>/dev/null
+# с тайм-аутом: запись в UART не должна подвесить переключение плеера (и веб)
+timeout 1 sh -c "printf '@HUSH %s\\n' $ms > /dev/ttyS2" 2>/dev/null
 sleep 0.05          # усилителю ~20 мс на заглушение
 exit 0
