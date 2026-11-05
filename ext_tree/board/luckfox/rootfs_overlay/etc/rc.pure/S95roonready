@@ -12,18 +12,24 @@ start() {
     # DSD256, и Roon должен видеть, что DSD512 нельзя (тогда понизит его сам)
     PRE=""
     [ -f /usr/lib/digifox/raat_card.so ] && PRE=/usr/lib/digifox/raat_card.so
+    # Предел DSD для Roon — "max_dsd_rate" в настройках выхода raat_app (DSD256 =
+    # 11 289 600 Гц): Roon сам понижает DSD512. Перехват частот в raat_card.so на
+    # это не влиял — raat_app берёт предел из своей настройки.
+    CONF=/etc/raat.conf
     if [ "$(cat /etc/digifox/srcmode 2>/dev/null)" != fox ]; then
         export DIGIFOX_DSD_MAX=256
+        sed 's/"dsd_mode": *"\([a-z_]*\)"/"dsd_mode": "\1", "max_dsd_rate": 11289600/' /etc/raat.conf > /tmp/raat_run.conf
+        grep -q max_dsd_rate /tmp/raat_run.conf && CONF=/tmp/raat_run.conf
     else
         unset DIGIFOX_DSD_MAX
     fi
-    LD_PRELOAD=$PRE /opt/RoonReady/raat_app /etc/raat.conf > /dev/null 2>&1 &
+    LD_PRELOAD=$PRE /opt/RoonReady/raat_app $CONF > /dev/null 2>&1 &
     # DigiFox: транспорт hifiberry (MPRIS по D-Bus — кнопки плеера с пульта усилителя).
     # Если raat_app с ним не поднялся (нет D-Bus и т. п.) — запустить без него, как раньше.
-    if grep -q '"transport"' /etc/raat.conf; then
+    if grep -q '"transport"' $CONF; then
         sleep 3
         if ! pidof raat_app >/dev/null; then
-            sed '/"transport"/,/},/d' /etc/raat.conf > /tmp/raat_plain.conf
+            sed '/"transport"/,/},/d' $CONF > /tmp/raat_plain.conf
             echo "$(date '+%d.%m %H:%M:%S') roon: raat_app не стартовал с транспортом — без кнопок пульта" >> /tmp/digifox_events.log
             LD_PRELOAD=$PRE /opt/RoonReady/raat_app /tmp/raat_plain.conf > /dev/null 2>&1 &
         fi
