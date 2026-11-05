@@ -60,8 +60,13 @@ static int dsd_capped(const snd_pcm_hw_params_t *params, unsigned int val)
         max = e && e[0] == '2' && e[1] == '5' && e[2] == '6';
     }
     if (!max) return 0;
-    snd_pcm_format_t f;
-    if (snd_pcm_hw_params_get_format(params, &f) < 0) return 0;   /* формат ещё не выбран */
+    /* get_format — через dlsym: так берётся текущая версия функции. Модуль собран
+     * без -lasound, и прямой вызов привязывался к старой (ALSA 0.9) версии, которая
+     * возвращает формат вместо кода и не пишет *val — проверка не срабатывала. */
+    static int (*get_fmt)(const snd_pcm_hw_params_t *, snd_pcm_format_t *);
+    if (!get_fmt) get_fmt = (int (*)(const snd_pcm_hw_params_t *, snd_pcm_format_t *))dlsym(RTLD_DEFAULT, "snd_pcm_hw_params_get_format");
+    snd_pcm_format_t f = SND_PCM_FORMAT_UNKNOWN;
+    if (!get_fmt || get_fmt(params, &f) < 0) return 0;   /* формат ещё не выбран */
     unsigned int top = dsd256_rate(f);
     /* с запасом на семейство 48 кГц: DSD256/48 = 384000 (U32) */
     return top && val > top + top / 10;
