@@ -8,9 +8,15 @@ start() {
     renice -15 $$ 
     # DigiFox, режим ФОКС: выход — модуль пересчёта (ALSA ioplug, у него нет номера
     # карты), raat_app без номера карты не находит форматов — подсказать карту 0
+    # В режиме АК — тот же модуль, но для другого: AK4137 принимает DSD максимум
+    # DSD256, и Roon должен видеть, что DSD512 нельзя (тогда понизит его сам)
     PRE=""
-    [ "$(cat /etc/digifox/srcmode 2>/dev/null)" = fox ] && [ -f /usr/lib/digifox/raat_card.so ] && \
-        PRE=/usr/lib/digifox/raat_card.so
+    [ -f /usr/lib/digifox/raat_card.so ] && PRE=/usr/lib/digifox/raat_card.so
+    if [ "$(cat /etc/digifox/srcmode 2>/dev/null)" != fox ]; then
+        export DIGIFOX_DSD_MAX=256
+    else
+        unset DIGIFOX_DSD_MAX
+    fi
     LD_PRELOAD=$PRE /opt/RoonReady/raat_app /etc/raat.conf > /dev/null 2>&1 &
     # DigiFox: транспорт hifiberry (MPRIS по D-Bus — кнопки плеера с пульта усилителя).
     # Если raat_app с ним не поднялся (нет D-Bus и т. п.) — запустить без него, как раньше.
