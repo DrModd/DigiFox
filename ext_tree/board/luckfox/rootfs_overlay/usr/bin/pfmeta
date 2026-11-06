@@ -231,7 +231,7 @@ roon)
     # xesam:title/artist/album, mpris:artUrl, Position. Опрашиваем, пока raat_app жив.
     if [ -f /tmp/pfmeta_roon.pid ] && kill -0 "$(cat /tmp/pfmeta_roon.pid)" 2>/dev/null; then exit 0; fi
     echo $$ > /tmp/pfmeta_roon.pid
-    last=""; lst=""; pkey=""; fkey=""; fx=1
+    last=""; lst=""; pkey=""; fkey=""; fx=1; praw=""
     while pidof raat_app >/dev/null; do
         r=$(timeout 3 dbus-send --system --print-reply --dest=org.mpris.MediaPlayer2.raat \
               /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.GetAll \
@@ -273,6 +273,24 @@ roon)
                 # (DSD_U32: позиция идёт в 32 раза медленнее, строка трека стоит на месте).
                 # Множитель находим сами: сколько секунд прошло на самом деле против
                 # прироста Position с начала трека (или с перемотки) -> 1, 8, 16 или 32.
+                # Position стоит (raat_app на части DSD отдаёт 0 всё время): не переписывать
+                # позицию каждые 2 с — иначе время на экране всё время сбрасывается в 0.
+                # Время тогда идёт от начала трека / паузы по часам (как экстраполируют
+                # экран и приложение из /tmp/np_prog).
+                raw=$pos
+                if [ -n "$raw" ] && [ "$raw" = "$praw" ] && [ "$key" = "$pkey" ]; then
+                    stuck=1
+                    if [ "$ps" = play ] && [ "$lst" = play ]; then sleep 2; continue; fi
+                    if [ "$ps" != "$lst" ]; then
+                        # пауза / продолжение при стоящей Position: позиция — по часам из np_prog
+                        set -- $(cat /tmp/np_prog 2>/dev/null)
+                        p=${1:-0}; [ "$3" = play ] && p=$((p + ($(date +%s) - ${2:-0}) * 1000))
+                        prog $p $ps; lst=$ps; sleep 2; continue
+                    fi
+                    sleep 2; continue
+                fi
+                [ "$key" != "$pkey" ] && stuck=0
+                praw=$raw
                 case "$pos" in ''|*[!0-9]*) ;; *)
                     now=$(date +%s)
                     if [ "$key" != "$pkey" ] || [ "$pos" -lt "${p0:-0}" ] || [ "$ps" != play ] || [ "$lst" != play ]; then
