@@ -47,7 +47,7 @@
 
     <!-- AX5689 -->
     <section class="panel">
-        <div class="cap">РЕЖИМ AX5689</div>
+        <div class="cap">РЕЖИМ УСИЛИТЕЛЯ</div>
         <div class="row2">
             <button class="hifi" data-k="mode" data-v="0">ZCM</button>
             <button class="hifi" data-k="mode" data-v="1">BD</button>
@@ -108,9 +108,17 @@
         <button class="hifi wide" id="sleep-off" hidden>ОТМЕНИТЬ ТАЙМЕР</button>
     </section>
 
+    <!-- Time -->
+    <section class="panel">
+        <div class="set-head"><div class="cap grow">ВРЕМЯ</div><div class="set-val" id="clock-val"></div></div>
+        <div class="set-label">Часовой пояс</div>
+        <select id="tz" aria-label="Часовой пояс"></select>
+        <div class="hint">Часы на экране усилителя, таймер сна и будильник идут по этому поясу. Меняется сразу.</div>
+    </section>
+
     <!-- Alarm -->
     <section class="panel">
-        <div class="set-head"><div class="cap grow">БУДИЛЬНИК</div><div class="set-val" id="clock-val"></div></div>
+        <div class="set-head"><div class="cap grow">БУДИЛЬНИК</div></div>
         <div class="alarm-top">
             <input type="time" id="a-time" value="07:00" aria-label="Время будильника">
             <button class="hifi" id="a-on">ВЫКЛ</button>
@@ -135,20 +143,7 @@
         <div class="set-label">Громкость <span id="a-vol-val"></span></div>
         <input type="range" id="a-vol" min="-60" max="0" value="-30" aria-label="Громкость будильника">
         <div class="hint">Усилитель включится, запустит источник и за минуту плавно поднимет громкость с −20 dB от выбранной. Qobuz и Spotify сами не заиграют — их запускает телефон.</div>
-        <div class="set-label">Часовой пояс</div>
-        <select id="tz" aria-label="Часовой пояс"></select>
         <button class="hifi wide on" id="a-save">СОХРАНИТЬ БУДИЛЬНИК</button>
-    </section>
-
-    <!-- Firmware -->
-    <section class="panel">
-        <div class="set-head"><div class="cap grow">ПРОШИВКА УСИЛИТЕЛЯ</div><div class="set-val" id="fw-ver"></div></div>
-        <button class="hifi wide on" id="fw-builtin" hidden></button>
-        <label class="file" for="fw-file"><span id="fw-name">Выбрать файл .bin…</span></label>
-        <input type="file" id="fw-file" accept=".bin,application/octet-stream" hidden>
-        <button class="hifi wide" id="fw-go" disabled>ПРОШИТЬ</button>
-        <div class="hint">Файл Test_i2c.bin из папки Debug проекта в STM32CubeIDE. Настройки и коды пульта сохранятся. Во время прошивки усилитель выключен.</div>
-        <pre class="log small" id="fw-log" hidden></pre>
     </section>
 
     <footer class="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>

@@ -40,7 +40,6 @@
         </div>
         <div class="rate-row">
             <span class="rate" id="rate">&nbsp;</span>
-            <span class="cap" id="mode-cap"></span>
         </div>
     </section>
 
@@ -69,17 +68,7 @@
     </section>
 
     <section class="panel">
-        <div class="cap" data-t="mode">РЕЖИМ</div>
-        <div class="row3">
-            <button class="hifi" id="mode-net" data-t="net">СЕТЬ</button>
-            <button class="hifi" id="mode-dac" data-t="dac">USB-ЦАП</button>
-            <button class="hifi" id="mode-usb">USB → I2S</button>
-        </div>
-        <div class="note" id="mode-note"></div>
-    </section>
-
-    <section class="panel">
-        <div class="cap" data-t="players">ПЛЕЕРЫ</div>
+        <div class="cap" data-t="players">ИСТОЧНИКИ</div>
         <div class="grid" id="players"></div>
         <a class="hifi player-ui" id="player-ui" target="_blank" rel="noopener" hidden></a>
         <a class="hifi player-ui" href="yandex.php">ЯНДЕКС МУЗЫКА</a>
@@ -95,8 +84,8 @@
         <a class="menu-item" href="amplifier.php" data-t="m_amp">Усилитель, будильник, таймер</a>
         <a class="menu-item" href="yandex.php">Яндекс Музыка</a>
         <a class="menu-item" href="radio_edit.php" data-t="m_radio">Радиостанции</a>
-        <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки I2S</a>
-        <button class="menu-item" id="m-update" data-t="m_update">Обновление прошивки</button>
+        <a class="menu-item" href="update.php" data-t="m_update">Обновление</a>
+        <a class="menu-item" href="settings.php" data-t="m_i2s">Настройки</a>
         <a class="menu-item" href="backup.php" id="m-backup" data-t="m_backup">Сохранить настройки в файл</a>
         <button class="menu-item" id="m-restore" data-t="m_restore">Восстановить настройки из файла</button>
         <a class="menu-item" href="diag.php" data-t="m_diag">Диагностика</a>

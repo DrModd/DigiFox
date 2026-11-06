@@ -22,6 +22,7 @@
         sub: { std: 'stereo', '8ch': '8 channels', lr: 'dual mono', plr: 'dual mono, balanced' }
     };
     var EN_TEXT = {
+        title: 'SETTINGS',
         needReboot: 'The clock change takes effect after the Fox reboots', reboot: 'REBOOT',
         clock: 'CLOCK SOURCE', output: 'OUTPUT', swaps: 'SWAPS',
         clockHint: 'PLL — the RV1106 internal synthesizer, MCLK pin is an output. EXT — external clock, MCLK is an input. Takes effect after a reboot.',
@@ -36,7 +37,7 @@
         fLoud: 'Loudness compensation', offU: 'OFF', onU: 'ON',
         fLoudHint: 'At low volume the ear hears less bass. Loudness compensation gently lifts the deep bass (below 80 Hz) more the lower the amplifier volume: no change in the top 20 dB of the scale, about 4 dB at −40 dB, 8 dB at most. Midrange and treble are left alone.',
         fHint: 'Heard in about a second, so you can compare while listening. Minimum phase — no pre-ringing (like SHORT on the AK4137). Slow roll-off — gentler at the very top (like SLOW). −3 dB headroom avoids inter-sample overs on loud records; make up the level on the amplifier.',
-        srcHint: 'AK4137 — the Fox sends audio as is, the AK4137 in the amplifier converts it. FOX — the Fox converts everything to PCM 192 kHz / 32 bit itself: PCM with soxr, DSD64–DSD256 with a decimator; DSD512 is not supported in this mode. Switching restarts the player.'
+        srcHint: 'AK4137 — the amplifier (AK4137) converts the rate, the Fox sends audio as is. FOX — the Fox converts everything to 192 kHz / 32 bit itself (DSD up to DSD256). Switching restarts the player.'
     };
     var SRC_NAME = RU ? { ak4137: 'в усилителе', fox: 'на Фоксе, 192 кГц' } : { ak4137: 'in the amplifier', fox: 'on the Fox, 192 kHz' };
     var srcMode = null, srcBusy = false, akPresent = null, srcFilter = null;
@@ -89,7 +90,7 @@
     function setPending(on) {
         pendingReboot = on;
         try { on ? sessionStorage.setItem('df_i2s_reboot', '1') : sessionStorage.removeItem('df_i2s_reboot'); } catch (e) {}
-        $('reboot-banner').hidden = !on;
+        if ($('reboot-banner')) $('reboot-banner').hidden = !on;
     }
 
     function status(text, spin) {
@@ -142,11 +143,10 @@
                 b.disabled = !cfg || busy;
             }
         }
-        if (cfg) {
-            $('v-mode').textContent = cfg.mode === 'ext' ? T.ext : T.pll;
-            $('v-mclk').textContent = (cfg.mclk || '?') + ' × FS';
-        }
-        $('reboot-banner').hidden = !pendingReboot;
+        // тактирование, MCLK и перестановки каналов из веба убраны (каналы — всегда правильно)
+        if (cfg && $('v-mode')) $('v-mode').textContent = cfg.mode === 'ext' ? T.ext : T.pll;
+        if (cfg && $('v-mclk')) $('v-mclk').textContent = (cfg.mclk || '?') + ' × FS';
+        if ($('reboot-banner')) $('reboot-banner').hidden = !pendingReboot;
     }
 
     function apply(k, v) {
@@ -206,7 +206,7 @@
                 apply(k, v);
             });
         }
-        $('reboot-btn').addEventListener('click', reboot);
+        if ($('reboot-btn')) $('reboot-btn').addEventListener('click', reboot);
         var fbs = document.querySelectorAll('[data-f]');
         for (var q = 0; q < fbs.length; q++) {
             fbs[q].addEventListener('click', function () {

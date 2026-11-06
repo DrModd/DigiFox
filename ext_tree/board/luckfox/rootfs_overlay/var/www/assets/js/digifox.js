@@ -11,16 +11,16 @@
 
     var T = RU ? {
         source: 'ИСТОЧНИК', amp: 'УСИЛИТЕЛЬ DIGID D1', volume: 'ГРОМКОСТЬ УСИЛИТЕЛЯ', mode: 'РЕЖИМ',
-        players: 'ПЛЕЕРЫ', net: 'СЕТЬ', dac: 'USB-ЦАП', dacOn: 'Вывод в USB-ЦАП…', dacNone: 'USB-ЦАП не подключён — подключите его к USB-порту Фокса (через OTG-переходник)',
+        players: 'ИСТОЧНИКИ', net: 'СЕТЬ', dac: 'USB-ЦАП', dacOn: 'Вывод в USB-ЦАП…', dacNone: 'USB-ЦАП не подключён — подключите его к USB-порту Фокса (через OTG-переходник)',
         dacNote: 'Сетевые плееры играют во внешний USB-ЦАП, усилитель молчит', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
-        m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки I2S', m_update: 'Обновление прошивки', m_reboot: 'Перезагрузить Фокс',
+        m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки', m_update: 'Обновление', m_reboot: 'Перезагрузить Фокс',
         m_backup: 'Сохранить настройки в файл', m_restore: 'Восстановить настройки из файла', m_diag: 'Диагностика', m_radio: 'Радиостанции',
         askRestore: 'Восстановить настройки из файла «%s»? Фокс перезагрузится.', restoreFail: 'Не удалось восстановить: ',
         m_classic: 'Классический интерфейс PureFox',
         noPlayer: 'Нет плеера', on: 'Включён', standby: 'Дежурный режим',
-        noLink: 'Нет связи с Фоксом', ampNone: 'Усилитель не на связи (UART) — громкость регулируется только им',
+        noLink: 'Нет связи с Фоксом', ampNone: 'Усилитель не на связи',
         ampStandby: 'Усилитель в дежурном режиме',
-        ampOn: 'Фокс на 100% (bit-perfect), громкость регулирует AX5689',
+        ampOn: '',
         stopped: 'нет сигнала', starting: 'Запуск: ', usbOn: 'Включение USB → I2S…', usbOff: 'Возврат в сеть…',
         powerOn: 'Включение усилителя…', powerOff: 'Выключение усилителя…',
         askUpdate: 'Проверить и установить обновление DigiFox с GitHub? Во время обновления звук прервётся, затем Фокс перезагрузится.',
@@ -30,21 +30,21 @@
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
-            aplayer: 'Веб-радио', apscream: 'APScream'
+            aplayer: 'Веб-радио', apscream: 'APScream', usb: 'USB'
         }
     } : {
         source: 'SOURCE', amp: 'DIGID D1 AMPLIFIER', volume: 'AMPLIFIER VOLUME', mode: 'MODE',
-        players: 'PLAYERS', net: 'NETWORK', dac: 'USB DAC', dacOn: 'Output to the USB DAC…', dacNone: 'USB DAC not connected — plug it into the Fox USB port (OTG adapter)',
+        players: 'SOURCES', net: 'NETWORK', dac: 'USB DAC', dacOn: 'Output to the USB DAC…', dacNone: 'USB DAC not connected — plug it into the Fox USB port (OTG adapter)',
         dacNote: 'Network players play to the external USB DAC, the amplifier is silent', power: 'POWER', cancel: 'CANCEL', close: 'Close',
-        m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'I2S settings', m_update: 'Firmware update', m_reboot: 'Reboot the Fox',
+        m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'Settings', m_update: 'Update', m_reboot: 'Reboot the Fox',
         m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics', m_radio: 'Radio stations',
         askRestore: 'Restore settings from “%s”? The Fox will reboot.', restoreFail: 'Restore failed: ',
         m_classic: 'Classic PureFox interface',
         ui_aplayer: 'WEB RADIO STATIONS ↗', ui_aprenderer: 'UPnP RENDERER SETTINGS ↗', ui_apscream: 'APSCREAM SETTINGS ↗',
         noPlayer: 'No player', on: 'On', standby: 'Standby',
-        noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected (UART) — volume is set only by the amplifier',
+        noLink: 'No connection to the Fox', ampNone: 'Amplifier not connected',
         ampStandby: 'Amplifier is in standby',
-        ampOn: 'Fox at 100% (bit-perfect), volume is set by the AX5689',
+        ampOn: '',
         stopped: 'no signal', starting: 'Starting: ', usbOn: 'Switching to USB → I2S…', usbOff: 'Back to network…',
         powerOn: 'Switching the amplifier on…', powerOff: 'Switching the amplifier to standby…',
         askUpdate: 'Check and install a DigiFox update from GitHub? Playback stops during the update, then the Fox reboots.',
@@ -53,11 +53,12 @@
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
-            aplayer: 'Web radio', apscream: 'APScream'
+            aplayer: 'Web radio', apscream: 'APScream', usb: 'USB'
         }
     };
 
-    var PLAYERS = ['qobuz', 'naa', 'raat', 'shairport', 'spotify', 'lms', 'aprenderer', 'mpd', 'aplayer', 'apscream'];
+    // все источники одним списком: сетевые плееры и USB (вход с компьютера)
+    var PLAYERS = ['qobuz', 'raat', 'spotify', 'shairport', 'aplayer', 'usb', 'naa', 'lms', 'aprenderer', 'mpd', 'apscream'];
 
     function $(id) { return document.getElementById(id); }
 
@@ -183,7 +184,7 @@
         setText('host', location.hostname);
         $('dot').className = 'dot' + (c ? ' on' : '');
 
-        var src = !c ? '—' : S.usb ? 'USB → I2S' : !S.service ? T.noPlayer : (T.players_[S.service] || S.service);
+        var src = !c ? '—' : S.usb ? 'USB' : !S.service ? T.noPlayer : (T.players_[S.service] || S.service);
         setText('source', src);
         $('source').className = 'source' + (c ? '' : ' off');
 
@@ -200,7 +201,6 @@
         }
         renderProg();
         setText('rate', S.rate || ' ');
-        setText('mode-cap', S.usb === true ? 'USB' : S.usb === false ? (S.dacOut ? T.dac : T.net) : '');
 
         // status line
         var st = $('status');
@@ -243,18 +243,12 @@
         $('vol-num').parentNode.className = 'vol-num' + (vOn && !(amp && amp.mute) ? '' : ' off');
         setText('vol-note', !c ? '' : !amp ? T.ampNone : !amp.power ? T.ampStandby : T.ampOn);
 
-        // mode
-        $('mode-net').className = 'hifi' + (S.usb === false && !S.dacOut ? ' on' : '');
-        $('mode-dac').className = 'hifi' + (S.usb === false && S.dacOut ? ' on' : '');
-        $('mode-usb').className = 'hifi' + (S.usb === true ? ' on' : '');
-        $('mode-net').disabled = $('mode-dac').disabled = $('mode-usb').disabled = !idle;
-        setText('mode-note', S.usb === false && S.dacOut ? (S.dacPresent ? T.dacNote : T.dacNone) : '');
-
         // players
         var btns = $('players').children;
         for (var i = 0; i < btns.length; i++) {
             var id = btns[i].getAttribute('data-id');
-            btns[i].className = 'hifi' + (S.usb === false && S.service === id ? ' on' : '');
+            var cur = id === 'usb' ? S.usb === true : S.usb === false && S.service === id;
+            btns[i].className = 'hifi' + (cur ? ' on' : '');
             btns[i].disabled = !idle;
         }
         // own web pages of APlayer (stations) and APrenderer — they work while the player runs;
@@ -287,9 +281,12 @@
     }
 
     function selectPlayer(id) {
-        if (S.usb === false && S.service === id) return;
+        if (id === 'usb') { setUsb(true); return; }
+        if (S.usb === false && S.service === id && !S.dacOut) return;
         action(T.starting + (T.players_[id] || id) + '…', function () {
             var p = S.usb ? post('usb_to_i2s.php', { action: 'disable' }, 60000) : Promise.resolve();
+            // внешний USB-ЦАП больше не выбирается: если был включён — звук снова в усилитель
+            if (S.dacOut) p = p.then(function () { return setOutput('i2s'); });
             return p.then(function () {
                 return post('handle_service.php', { service: id }, 60000);
             }).then(function (txt) {
@@ -446,9 +443,6 @@
             grid.appendChild(b);
         });
 
-        $('mode-net').addEventListener('click', function () { setUsb(false); });
-        $('mode-usb').addEventListener('click', function () { setUsb(true); });
-        $('mode-dac').addEventListener('click', setDac);
         $('power-btn').addEventListener('click', function () {
             if (S.amp) ampPost('power', S.amp.power ? T.powerOff : T.powerOn);
         });
@@ -477,10 +471,6 @@
         $('menu-btn').addEventListener('click', function () { show('menu', true); });
         $('m-close').addEventListener('click', function () { show('menu', false); });
         $('menu').addEventListener('click', function (e) { if (e.target === this) show('menu', false); });
-        $('m-update').addEventListener('click', function () {
-            show('menu', false);
-            confirmBox(T.askUpdate, runUpdate);
-        });
         $('m-restore').addEventListener('click', function () {
             show('menu', false);
             $('restore-file').value = '';

@@ -66,6 +66,7 @@
 #   @RATE ...          смена потока
 #   @SRC <id>          сменился плеер (с веб-страницы, из приложения, с усилителя)
 #   @USB on|off        включён/выключен USBtoI2S
+#   @FVER <версия>      версия прошивки DigiFox (для диагностики усилителя)
 #   @UPD <шаг> <текст> идёт обновление DigiFox (1 DOWNLOADING .. 4 RESTARTING), "@UPD -" — прервано;
 #                      усилитель приглушает звук до перезагрузки Фокса
 #   @TRACK ...         сменился трек (Qobuz, Spotify, AirPlay, MPD — см. pfmeta, track.php).
@@ -159,7 +160,8 @@ do_cmd() {
                 echo "$vu" > /tmp/amp_vu
                 /usr/bin/digifox-srcmode apply >/dev/null 2>&1
             fi ;;
-        aver) echo "$2" > /tmp/amp_ver; echo "${3:-st7789}" > /tmp/amp_disp ;;   # версия и экран усилителя
+        aver) echo "$2" > /tmp/amp_ver; echo "${3:-st7789}" > /tmp/amp_disp   # версия и экран усилителя
+              rm -f /tmp/fver_sent ;;      # усилитель (пере)запустился — сообщить ему версию Фокса
         alog) # строка от усилителя в журнал событий (причина выключения, перезапуск МК)
             shift
             echo "$(date '+%d.%m %H:%M:%S') amp: $*" >> /tmp/digifox_events.log ;;
@@ -262,7 +264,10 @@ serve() {
                 m=$((m + 1))
                 if [ $m -ge 2 ]; then      # плеер и режим USB — раз в ~1 с
                     m=0
-                    # время: часы усилителя, таймер сна, будильник
+                    # время: часы усилителя, таймер сна, будильник. Часовой пояс — каждый
+                    # раз из файла: смена в вебе сразу меняет часы (раньше — только после
+                    # перезапуска pfctl, «ставишь +5 — ничего не меняется»)
+                    TZ=$(cat /etc/digifox/tz 2>/dev/null); export TZ=${TZ:-MSK-3}
                     set -- $(date '+%H:%M %s %u %Y %j')
                     if [ "${4:-0}" -ge 2025 ]; then          # время уже синхронизировано (NTP)
                         if [ "$1" != "$last_t" ]; then
@@ -291,6 +296,10 @@ serve() {
                     if [ $q -ge 5 ]; then
                         q=0; ip_=$(net_ip)
                         [ "$ip_" != "$last_ip" ] && echo "@NET $ip_" && last_ip=$ip_
+                        # версия Фокса — для экрана диагностики усилителя (1.18+)
+                        if [ ! -f /tmp/fver_sent ]; then
+                            echo "@FVER $(cat /etc/digifox-release 2>/dev/null || echo ?)"; touch /tmp/fver_sent
+                        fi
                     fi
                     # обновление DigiFox (update.sh -> /tmp/fox_upd): усилитель приглушает звук.
                     # last_ud="?" в начале: после загрузки Фокса сразу "@UPD -", иначе

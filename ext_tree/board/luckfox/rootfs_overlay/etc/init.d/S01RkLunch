@@ -43,14 +43,15 @@ fi
 grep MCLK=1024 /etc/i2s.conf && echo 1024 > /sys/devices/platform/ffae0000.i2s/mclk_multiplier
 echo 100 > /sys/devices/platform/ffae0000.i2s/postmute_delay_ms
 
-PCM_SWAP=$(grep '^PCM_SWAP=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
-[ -n "$PCM_SWAP" ] && echo "$PCM_SWAP" > /sys/devices/platform/ffae0000.i2s/pcm_channel_swap || echo 0 > /sys/devices/platform/ffae0000.i2s/pcm_channel_swap
-
-DSD_SWAP=$(grep '^DSD_SWAP=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
-[ -n "$DSD_SWAP" ] && echo "$DSD_SWAP" > /sys/devices/platform/ffae0000.i2s/dsd_physical_swap || echo 1 > /sys/devices/platform/ffae0000.i2s/dsd_physical_swap
-
-FREQ_SWAP=$(grep '^FREQ_SWAP=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')
-[ -n "$FREQ_SWAP" ] && echo "$FREQ_SWAP" > /sys/devices/platform/ffae0000.i2s/freq_domain_invert || echo 0 > /sys/devices/platform/ffae0000.i2s/freq_domain_invert
+# Каналы — всегда правильно, без перестановок (переключатели убраны из веба):
+# PCM левый = левый, DSD — физические линии как на плате DigiD D1, 44,1/48 — как есть.
+# В /etc/i2s.conf — те же значения, чтобы старые настройки не возвращались.
+echo 0 > /sys/devices/platform/ffae0000.i2s/pcm_channel_swap
+echo 1 > /sys/devices/platform/ffae0000.i2s/dsd_physical_swap
+echo 0 > /sys/devices/platform/ffae0000.i2s/freq_domain_invert
+if grep -qE '^(PCM_SWAP=[^0]|DSD_SWAP=[^1]|FREQ_SWAP=[^0])' /etc/i2s.conf 2>/dev/null; then
+    sed -i -e 's/^PCM_SWAP=.*/PCM_SWAP=0/' -e 's/^DSD_SWAP=.*/DSD_SWAP=1/' -e 's/^FREQ_SWAP=.*/FREQ_SWAP=0/' /etc/i2s.conf 2>/dev/null
+fi
 
 # LEFTJUST disabled - driver does not support it yet
 # LEFTJUST=$(grep '^LEFTJUST=' /etc/i2s.conf | cut -d'=' -f2 | tr -d '[:space:]')

@@ -399,3 +399,14 @@ input[type=time]:focus-visible, select:focus-visible { outline: 2px solid var(--
     .source { font-size: 24px; }
     .row4 { grid-template-columns: 1fr 1fr; }
 }
+
+/* Обновление: список изменений */
+.changes { margin: 10px 0 4px; padding: 0; list-style: none; font-size: 13px; line-height: 1.45; color: var(--dim); }
+.changes[hidden] { display: none; }
+.changes .ver { margin: 10px 0 4px; color: var(--fg); font-size: 12px; letter-spacing: .08em; }
+.changes li { position: relative; padding-left: 14px; margin: 3px 0; }
+.changes li::before { content: "·"; position: absolute; left: 3px; color: var(--fg); }
+.upd-state { font-size: 15px; margin: 6px 0 10px; color: var(--fg); }
+.upd-state.dim { color: var(--dim); }
+details.manual { margin-top: 12px; }
+details.manual summary { cursor: pointer; color: var(--dim); font-size: 13px; }

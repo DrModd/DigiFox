@@ -18,7 +18,7 @@
         });
     }
 
-    var S = null, pending = {}, alarmLoaded = false, alarmDirty = false, flashing = false, msgTimer = null;
+    var S = null, pending = {}, alarmLoaded = false, alarmDirty = false, flashing = false, msgTimer = null, tzSaving = false;
 
     function status(text, spin) {
         clearTimeout(msgTimer);
@@ -97,7 +97,7 @@
             var bs = document.querySelectorAll('[data-k="' + k + '"]');
             for (var n = 0; n < bs.length; n++) if (!newCfg) bs[n].disabled = true;
         });
-        $('prot-hint').textContent = amp && amp.cfg && !newCfg ? 'Нужна прошивка усилителя 1.15 или новее (раздел «Прошивка усилителя» ниже).' : '';
+        $('prot-hint').textContent = amp && amp.cfg && !newCfg ? 'Нужна прошивка усилителя 1.15 или новее (меню → Обновление).' : '';
 
         // sleep timer
         var left = S ? S.sleep_left : 0;
@@ -119,17 +119,12 @@
             $('a-src').value = a.src;
             if ($('a-src').value !== a.src) $('a-src').value = 'keep';
             $('a-vol').value = a.vol;
-            $('tz').value = S.tz;
             showVol();
         }
+        // часовой пояс — свой, сохраняется сразу при выборе
+        if (S && S.tz && document.activeElement !== $('tz') && !tzSaving) $('tz').value = S.tz;
 
-        // firmware
-        $('fw-ver').textContent = S && S.ver ? 'версия ' + S.ver : (amp ? 'версия до 1.1' : '');
-        $('fw-go').disabled = flashing || !$('fw-file').files.length;
-        var bi = $('fw-builtin');
-        bi.hidden = !(S && S.fw_update);
-        if (S && S.fw_builtin) bi.textContent = 'ОБНОВИТЬ УСИЛИТЕЛЬ ДО ' + S.fw_builtin;
-        bi.disabled = flashing;
+        // прошивка усилителя — на странице «Обновление» (update.php)
     }
 
     function refresh() {
@@ -175,7 +170,7 @@
         var days = getDays();
         if (alarmOn && !days) { status('Выберите хотя бы один день'); return; }
         status('Сохраняю…', true);
-        post({ action: 'tz', tz: $('tz').value }).then(function () {
+        Promise.resolve().then(function () {
             return post({
                 action: 'alarm', on: alarmOn ? 1 : 0, time: $('a-time').value || '07:00',
                 days: days, src: $('a-src').value, vol: $('a-vol').value
@@ -253,19 +248,16 @@
         }
         $('a-time').addEventListener('change', dirty);
         $('a-src').addEventListener('change', dirty);
-        $('tz').addEventListener('change', dirty);
+        $('tz').addEventListener('change', function () {
+            tzSaving = true;
+            post({ action: 'tz', tz: this.value }).then(function () {
+                status('Часовой пояс сохранён');
+                return refresh();
+            }).catch(function (e) { status(e.message); }).then(function () { tzSaving = false; });
+        });
         $('a-vol').addEventListener('input', function () { showVol(); dirty(); });
         $('a-save').addEventListener('click', saveAlarm);
 
-        $('fw-file').addEventListener('change', function () {
-            var f = this.files[0];
-            $('fw-name').textContent = f ? f.name + ' · ' + Math.round(f.size / 1024) + ' КБ' : 'Выбрать файл .bin…';
-            render();
-        });
-        $('fw-go').addEventListener('click', flash);
-        $('fw-builtin').addEventListener('click', function () {
-            if (S && confirm('Обновить прошивку усилителя до ' + S.fw_builtin + '? Около минуты усилитель будет выключен.')) flash(true);
-        });
 
         showVol();
         render();

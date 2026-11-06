@@ -125,7 +125,17 @@ jobs:
           (cd flash && zip -q -9 ../release/DigiFox-$B.zip *)
           cp $I/rootfs.squashfs $I/boot.img release/
           echo "$B" > release/version.txt
+          # что нового (страница «Обновление»): раздел «## Новое» -> номер этой сборки
+          sed "s/^## Новое\$/## $B/" CHANGELOG.ru.md | sed '/^<!--/,/^-->/d' > release/changes.txt
+          awk -v b="## $B" '$0==b{f=1;next} /^## /{f=0} f' release/changes.txt > release/notes.txt
           (cd release && sha256sum DigiFox-$B.zip rootfs.squashfs boot.img > SHA256SUMS)
+          {
+            echo "DigiFox $B (commit ${{ github.sha }})"; echo
+            if [ -s release/notes.txt ]; then echo "Что нового:"; cat release/notes.txt; echo; fi
+            echo 'Прошивка через RV1106_Toolkit: распакуйте `DigiFox-'"$B"'.zip`,'
+            echo 'Download → USB → папка с файлами → отметить все → Download.'; echo
+            echo 'Онлайн-обновление: веб-интерфейс → меню → Обновление (берёт rootfs.squashfs и boot.img отсюда).'
+          } > release/body.md
           ls -la release
           cat release/SHA256SUMS
 
@@ -136,18 +146,13 @@ jobs:
           name: DigiFox ${{ steps.ver.outputs.build }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          body: |
-            DigiFox ${{ steps.ver.outputs.build }} (commit ${{ github.sha }})
-
-            Прошивка через RV1106_Toolkit: распакуйте `DigiFox-${{ steps.ver.outputs.build }}.zip`,
-            Download → USB → папка с файлами → отметить все → Download.
-
-            Онлайн-обновление: кнопка с номером версии в веб-интерфейсе (берёт rootfs.squashfs и boot.img отсюда).
+          body_path: release/body.md
           files: |
             release/DigiFox-${{ steps.ver.outputs.build }}.zip
             release/rootfs.squashfs
             release/boot.img
             release/version.txt
+            release/changes.txt
             release/SHA256SUMS
 
       # Хранить только 10 последних релизов (каждый ~100 МБ); онлайн-обновление берёт последний
