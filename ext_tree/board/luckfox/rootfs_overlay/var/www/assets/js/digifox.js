@@ -58,8 +58,8 @@
     };
 
     // все источники одним списком: сетевые плееры и USB (вход с компьютера);
-    // последняя кнопка USB-ЦАП — не источник, а выход: сетевые плееры играют во внешний USB-ЦАП (вкл/выкл)
-    var PLAYERS = ['qobuz', 'raat', 'spotify', 'shairport', 'aplayer', 'usb', 'naa', 'lms', 'aprenderer', 'mpd', 'apscream', 'dac'];
+    // кнопка USB-ЦАП (вверху справа) — не источник, а выход: сетевые плееры играют во внешний USB-ЦАП (вкл/выкл)
+    var PLAYERS = ['usb', 'dac', 'qobuz', 'raat', 'spotify', 'shairport', 'naa', 'lms', 'aprenderer', 'mpd', 'apscream', 'aplayer'];
 
     function $(id) { return document.getElementById(id); }
 
