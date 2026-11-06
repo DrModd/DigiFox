@@ -11,7 +11,7 @@
 
     var T = RU ? {
         source: 'ИСТОЧНИК', amp: 'УСИЛИТЕЛЬ DIGID D1', volume: 'ГРОМКОСТЬ УСИЛИТЕЛЯ', mode: 'РЕЖИМ',
-        players: 'ИСТОЧНИКИ', net: 'СЕТЬ', dac: 'USB-ЦАП', dacOn: 'Вывод в USB-ЦАП…', dacNone: 'USB-ЦАП не подключён — подключите его к USB-порту Фокса (через OTG-переходник)',
+        players: 'ИСТОЧНИКИ', net: 'СЕТЬ', dac: 'USB-ЦАП', dacOn: 'Вывод в USB-ЦАП…', dacOff: 'Звук снова в усилитель…', dacNone: 'USB-ЦАП не подключён — подключите его к USB-порту Фокса (через OTG-переходник)',
         dacNote: 'Сетевые плееры играют во внешний USB-ЦАП, усилитель молчит', power: 'POWER', cancel: 'ОТМЕНА', close: 'Закрыть',
         m_amp: 'Усилитель, будильник, таймер', m_i2s: 'Настройки', m_update: 'Обновление', m_reboot: 'Перезагрузить Фокс',
         m_backup: 'Сохранить настройки в файл', m_restore: 'Восстановить настройки из файла', m_diag: 'Диагностика', m_radio: 'Радиостанции',
@@ -30,11 +30,11 @@
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
-            aplayer: 'Веб-радио', apscream: 'APScream', usb: 'USB'
+            aplayer: 'Веб-радио', apscream: 'APScream', usb: 'USB', dac: 'USB-ЦАП'
         }
     } : {
         source: 'SOURCE', amp: 'DIGID D1 AMPLIFIER', volume: 'AMPLIFIER VOLUME', mode: 'MODE',
-        players: 'SOURCES', net: 'NETWORK', dac: 'USB DAC', dacOn: 'Output to the USB DAC…', dacNone: 'USB DAC not connected — plug it into the Fox USB port (OTG adapter)',
+        players: 'SOURCES', net: 'NETWORK', dac: 'USB DAC', dacOn: 'Output to the USB DAC…', dacOff: 'Back to the amplifier…', dacNone: 'USB DAC not connected — plug it into the Fox USB port (OTG adapter)',
         dacNote: 'Network players play to the external USB DAC, the amplifier is silent', power: 'POWER', cancel: 'CANCEL', close: 'Close',
         m_amp: 'Amplifier, alarm, sleep timer', m_i2s: 'Settings', m_update: 'Update', m_reboot: 'Reboot the Fox',
         m_backup: 'Save settings to a file', m_restore: 'Restore settings from a file', m_diag: 'Diagnostics', m_radio: 'Radio stations',
@@ -53,12 +53,13 @@
         players_: {
             qobuz: 'Qobuz Connect', naa: 'HQPlayer NAA', raat: 'Roon Ready', shairport: 'AirPlay',
             spotify: 'Spotify Connect', lms: 'Squeezelite', aprenderer: 'UPnP Renderer', mpd: 'MPD',
-            aplayer: 'Web radio', apscream: 'APScream', usb: 'USB'
+            aplayer: 'Web radio', apscream: 'APScream', usb: 'USB', dac: 'USB DAC'
         }
     };
 
-    // все источники одним списком: сетевые плееры и USB (вход с компьютера)
-    var PLAYERS = ['qobuz', 'raat', 'spotify', 'shairport', 'aplayer', 'usb', 'naa', 'lms', 'aprenderer', 'mpd', 'apscream'];
+    // все источники одним списком: сетевые плееры и USB (вход с компьютера);
+    // последняя кнопка USB-ЦАП — не источник, а выход: сетевые плееры играют во внешний USB-ЦАП (вкл/выкл)
+    var PLAYERS = ['qobuz', 'raat', 'spotify', 'shairport', 'aplayer', 'usb', 'naa', 'lms', 'aprenderer', 'mpd', 'apscream', 'dac'];
 
     function $(id) { return document.getElementById(id); }
 
@@ -185,6 +186,7 @@
         $('dot').className = 'dot' + (c ? ' on' : '');
 
         var src = !c ? '—' : S.usb ? 'USB' : !S.service ? T.noPlayer : (T.players_[S.service] || S.service);
+        if (c && S.usb === false && S.service && S.dacOut) src += '  →  ' + T.players_.dac;
         setText('source', src);
         $('source').className = 'source' + (c ? '' : ' off');
 
@@ -241,13 +243,14 @@
             setText('vol-unit', '');
         }
         $('vol-num').parentNode.className = 'vol-num' + (vOn && !(amp && amp.mute) ? '' : ' off');
-        setText('vol-note', !c ? '' : !amp ? T.ampNone : !amp.power ? T.ampStandby : T.ampOn);
+        setText('vol-note', !c ? '' : S.usb === false && S.dacOut ? T.dacNote : !amp ? T.ampNone : !amp.power ? T.ampStandby : T.ampOn);
 
         // players
         var btns = $('players').children;
         for (var i = 0; i < btns.length; i++) {
             var id = btns[i].getAttribute('data-id');
-            var cur = id === 'usb' ? S.usb === true : S.usb === false && S.service === id;
+            var cur = id === 'usb' ? S.usb === true : id === 'dac' ? S.usb === false && S.dacOut
+                    : S.usb === false && S.service === id;
             btns[i].className = 'hifi' + (cur ? ' on' : '');
             btns[i].disabled = !idle;
         }
@@ -282,11 +285,10 @@
 
     function selectPlayer(id) {
         if (id === 'usb') { setUsb(true); return; }
-        if (S.usb === false && S.service === id && !S.dacOut) return;
+        if (id === 'dac') { toggleDac(); return; }
+        if (S.usb === false && S.service === id) return;
         action(T.starting + (T.players_[id] || id) + '…', function () {
             var p = S.usb ? post('usb_to_i2s.php', { action: 'disable' }, 60000) : Promise.resolve();
-            // внешний USB-ЦАП больше не выбирается: если был включён — звук снова в усилитель
-            if (S.dacOut) p = p.then(function () { return setOutput('i2s'); });
             return p.then(function () {
                 return post('handle_service.php', { service: id }, 60000);
             }).then(function (txt) {
@@ -316,8 +318,12 @@
         });
     }
 
-    function setDac() {
-        if (S.usb === false && S.dacOut) return;
+    function toggleDac() {
+        if (S.usb === false && S.dacOut) {          // повторное нажатие — звук снова в усилитель
+            action(T.dacOff, function () { return setOutput('i2s'); });
+            return;
+        }
+        if (!S.dacPresent) { S.error = T.dacNone; render(); return; }
         action(T.dacOn, function () {
             var p = S.usb ? post('usb_to_i2s.php', { action: 'disable' }, 60000) : Promise.resolve();
             return p.then(function () { return setOutput('usb'); });

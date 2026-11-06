@@ -161,7 +161,7 @@ do_cmd() {
                 /usr/bin/digifox-srcmode apply >/dev/null 2>&1
             fi ;;
         aver) echo "$2" > /tmp/amp_ver; echo "${3:-st7789}" > /tmp/amp_disp   # версия и экран усилителя
-              rm -f /tmp/fver_sent ;;      # усилитель (пере)запустился — сообщить ему версию Фокса
+              touch /tmp/fver_sent ;;      # усилитель (пере)запустился — сразу сообщить ему версию Фокса
         alog) # строка от усилителя в журнал событий (причина выключения, перезапуск МК)
             shift
             echo "$(date '+%d.%m %H:%M:%S') amp: $*" >> /tmp/digifox_events.log ;;
@@ -296,9 +296,13 @@ serve() {
                     if [ $q -ge 5 ]; then
                         q=0; ip_=$(net_ip)
                         [ "$ip_" != "$last_ip" ] && echo "@NET $ip_" && last_ip=$ip_
-                        # версия Фокса — для экрана диагностики усилителя (1.18+)
-                        if [ ! -f /tmp/fver_sent ]; then
-                            echo "@FVER $(cat /etc/digifox-release 2>/dev/null || echo ?)"; touch /tmp/fver_sent
+                        # версия Фокса — для экрана диагностики усилителя (1.18+). Без флага в /tmp:
+                        # после прошивки усилителя pfctl перезапускается, а флаг оставался — версия
+                        # больше не уходила («FOX -»). Раз в ~30 с и сразу после старта pfctl
+                        fv=$((fv - 1))
+                        if [ "$fv" -le 0 ] || [ -f /tmp/fver_sent ]; then
+                            [ -f /tmp/fver_sent ] && rm -f /tmp/fver_sent
+                            fv=6; echo "@FVER $(cat /etc/digifox-release 2>/dev/null || echo ?)"
                         fi
                     fi
                     # обновление DigiFox (update.sh -> /tmp/fox_upd): усилитель приглушает звук.
