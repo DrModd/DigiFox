@@ -26,7 +26,7 @@
         needReboot: 'The clock change takes effect after the Fox reboots', reboot: 'REBOOT',
         clock: 'CLOCK SOURCE', output: 'OUTPUT', swaps: 'SWAPS',
         clockHint: 'PLL — the RV1106 internal synthesizer, MCLK pin is an output. EXT — external clock, MCLK is an input. Takes effect after a reboot.',
-        mclkHint: 'In PLL mode it changes at once, in EXT mode after a reboot.',
+        mclkHint: 'MCLK frequency for the amplifier. Changes at once.',
         outputHint: 'STD — stereo; 8CH — 8 channels up to 192 kHz; L/R — dual mono; ±L/±R — dual mono, balanced. Applied at once.',
         pcmSwap: 'PCM channels', pcmSwapD: 'Swap left and right',
         dsdSwap: 'DSD channels', dsdSwapD: 'Swap the physical DSD lines',

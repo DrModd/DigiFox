@@ -60,6 +60,15 @@
         <div class="hint" data-t="srcHint">AK4137 — частоту пересчитывает усилитель (AK4137), звук идёт с Фокса как есть. ФОКС — Фокс сам переводит всё в 192 кГц / 32 бит (DSD до DSD256). Переключение перезапускает плеер.</div>
     </section>
 
+    <section class="panel">
+        <div class="set-head"><div class="cap grow">MCLK</div><div class="set-val" id="v-mclk"></div></div>
+        <div class="row2">
+            <button class="hifi" data-k="mclk" data-v="512">512 × FS</button>
+            <button class="hifi" data-k="mclk" data-v="1024">1024 × FS</button>
+        </div>
+        <div class="hint" data-t="mclkHint">Частота MCLK на усилитель. Меняется сразу.</div>
+    </section>
+
     <footer class="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>
 </main>
 
