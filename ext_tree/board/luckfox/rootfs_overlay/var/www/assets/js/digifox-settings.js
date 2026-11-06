@@ -189,6 +189,35 @@
         });
     }
 
+    // ---------------- настройки усилителя (AK4137, режим AX5689) — amp.php ----------------
+    var amp = null, ampPending = {};
+    function renderAmp() {
+        var ok = amp && amp.present && amp.cfg;
+        var bs = document.querySelectorAll('[data-a]');
+        for (var i = 0; i < bs.length; i++) {
+            var k = bs[i].getAttribute('data-a'), v = bs[i].getAttribute('data-v');
+            var cur = ampPending[k] !== undefined ? ampPending[k] : ok ? amp.cfg[k] : null;
+            bs[i].className = 'hifi' + (cur !== null && cur !== undefined && String(cur) === v ? ' on' : '');
+            bs[i].disabled = !ok;
+        }
+    }
+    function loadAmp() {
+        return fetch('amp.php?full=1', { cache: 'no-store' }).then(function (r) { return r.json(); })
+            .then(function (j) { amp = j; }).catch(function () { amp = null; }).then(renderAmp);
+    }
+    function setAmp(k, v) {
+        if (!amp || !amp.present || ampPending[k] !== undefined) return;
+        ampPending[k] = v; renderAmp();
+        fetch('amp.php', {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=set&key=' + encodeURIComponent(k) + '&val=' + encodeURIComponent(v)
+        }).then(function (r) {
+            if (!r.ok) throw new Error(RU ? 'Усилитель не на связи' : 'Amplifier not connected');
+            // усилитель подтверждает следующим отчётом (acfg)
+            setTimeout(function () { delete ampPending[k]; loadAmp(); }, 1200);
+        }).catch(function (e) { delete ampPending[k]; status(e.message); renderAmp(); });
+    }
+
     function init() {
         if (!RU) {
             var ts = document.querySelectorAll('[data-t]');
@@ -207,6 +236,12 @@
             });
         }
         if ($('reboot-btn')) $('reboot-btn').addEventListener('click', reboot);
+        var abs = document.querySelectorAll('[data-a]');
+        for (var a = 0; a < abs.length; a++) {
+            abs[a].addEventListener('click', function () { setAmp(this.getAttribute('data-a'), this.getAttribute('data-v')); });
+        }
+        renderAmp(); loadAmp();
+        setInterval(function () { if (document.visibilityState !== 'hidden') loadAmp(); }, 5000);
         var fbs = document.querySelectorAll('[data-f]');
         for (var q = 0; q < fbs.length; q++) {
             fbs[q].addEventListener('click', function () {

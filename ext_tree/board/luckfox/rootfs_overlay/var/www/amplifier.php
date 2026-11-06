@@ -25,35 +25,6 @@
 
     <div class="status" id="status"></div>
 
-    <!-- AK4137 -->
-    <section class="panel">
-        <div class="cap">ПРЕОБРАЗОВАТЕЛЬ ЧАСТОТЫ AK4137</div>
-        <div class="set-label">Фильтр</div>
-        <div class="row2 tight">
-            <button class="hifi" data-k="filter" data-v="0">SHARP</button>
-            <button class="hifi" data-k="filter" data-v="1">SLOW</button>
-        </div>
-        <div class="set-label">Задержка фильтра</div>
-        <div class="row2 tight">
-            <button class="hifi" data-k="delay" data-v="0">NORMAL</button>
-            <button class="hifi" data-k="delay" data-v="1">SHORT</button>
-        </div>
-        <div class="set-label">Уровень DSD</div>
-        <div class="row2 tight">
-            <button class="hifi" data-k="dsdgain" data-v="0">0 dB</button>
-            <button class="hifi" data-k="dsdgain" data-v="1">+6 dB</button>
-        </div>
-    </section>
-
-    <!-- AX5689 -->
-    <section class="panel">
-        <div class="cap">РЕЖИМ УСИЛИТЕЛЯ</div>
-        <div class="row2">
-            <button class="hifi" data-k="mode" data-v="0">ZCM</button>
-            <button class="hifi" data-k="mode" data-v="1">BD</button>
-        </div>
-    </section>
-
     <!-- Power -->
     <section class="panel">
         <div class="cap">ПИТАНИЕ</div>

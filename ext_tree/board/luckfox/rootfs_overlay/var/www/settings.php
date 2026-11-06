@@ -60,6 +60,35 @@
         <div class="hint" data-t="srcHint">AK4137 — частоту пересчитывает усилитель (AK4137), звук идёт с Фокса как есть. ФОКС — Фокс сам переводит всё в 192 кГц / 32 бит (DSD до DSD256). Переключение перезапускает плеер.</div>
     </section>
 
+    <!-- AK4137 (усилитель, amp.php) -->
+    <section class="panel">
+        <div class="cap">ПРЕОБРАЗОВАТЕЛЬ ЧАСТОТЫ AK4137</div>
+        <div class="set-label">Фильтр</div>
+        <div class="row2 tight">
+            <button class="hifi" data-a="filter" data-v="0">SHARP</button>
+            <button class="hifi" data-a="filter" data-v="1">SLOW</button>
+        </div>
+        <div class="set-label">Задержка фильтра</div>
+        <div class="row2 tight">
+            <button class="hifi" data-a="delay" data-v="0">NORMAL</button>
+            <button class="hifi" data-a="delay" data-v="1">SHORT</button>
+        </div>
+        <div class="set-label">Уровень DSD</div>
+        <div class="row2 tight">
+            <button class="hifi" data-a="dsdgain" data-v="0">0 dB</button>
+            <button class="hifi" data-a="dsdgain" data-v="1">+6 dB</button>
+        </div>
+    </section>
+
+    <!-- AX5689 (усилитель, amp.php) -->
+    <section class="panel">
+        <div class="cap">РЕЖИМ УСИЛИТЕЛЯ</div>
+        <div class="row2">
+            <button class="hifi" data-a="mode" data-v="0">ZCM</button>
+            <button class="hifi" data-a="mode" data-v="1">BD</button>
+        </div>
+    </section>
+
     <section class="panel">
         <div class="set-head"><div class="cap grow">MCLK</div><div class="set-val" id="v-mclk"></div></div>
         <div class="row2">
