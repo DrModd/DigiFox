@@ -613,10 +613,10 @@ stream_open_pcm(pa_stream *s)
     snd_pcm_hw_params_any(s->pcm, hw);
     snd_pcm_hw_params_set_access(s->pcm, hw, SND_PCM_ACCESS_RW_INTERLEAVED);
     if (set_app_format(s->pcm, hw, s->ss.format, &s->alsa_fmt) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     s->alsa_fs = shim_alsa_frame_size(s->alsa_fmt, s->ss.channels);
     if (s->alsa_fs == 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     /* Application rate is the client's. The outer plug resamples to the slave.
      * set_rate_near on an ioplug can snap 44.1 to 48 or 88.2 and play fast.
      * If the exact rate is refused, fail: do not write 44.1 frames at 48 k. */
@@ -627,29 +627,29 @@ stream_open_pcm(pa_stream *s)
 
         dir = 0;
         if (snd_pcm_hw_params_set_rate_near(s->pcm, hw, &near, &dir) < 0)
-            goto fail;
+            { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
         if (near != s->ss.rate) {
             shim_log("pcm rate %u refused (near=%u)\n", s->ss.rate, near);
-            goto fail;
+            { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
         }
         rate = near;
     }
     if (snd_pcm_hw_params_set_channels(s->pcm, hw, s->ss.channels) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     if (fs)
         want_p = s->attr.minreq / fs;
     if (pick_period(s->pcm, hw, want_p, &period) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     if (snd_pcm_hw_params_set_period_size(s->pcm, hw, period, 0) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     if (fs)
         want_b = s->attr.tlength / fs;
     if (pick_buffer(s->pcm, hw, period, want_b, &buffer) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     if (snd_pcm_hw_params_set_buffer_size(s->pcm, hw, buffer) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     if (snd_pcm_hw_params(s->pcm, hw) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     snd_pcm_hw_params_get_period_size(hw, &period, &dir);
     snd_pcm_hw_params_get_buffer_size(hw, &buffer);
     snd_pcm_hw_params_free(hw);
@@ -662,7 +662,7 @@ stream_open_pcm(pa_stream *s)
     free(s->io_buf);
     s->io_buf = malloc(s->io_buf_bytes);
     if (!s->io_buf)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
 
     snd_pcm_sw_params_malloc(&sw);
     snd_pcm_sw_params_current(s->pcm, sw);
@@ -670,7 +670,7 @@ stream_open_pcm(pa_stream *s)
     snd_pcm_sw_params(s->pcm, sw);
     snd_pcm_sw_params_free(sw);
     if (snd_pcm_prepare(s->pcm) < 0)
-        goto fail;
+        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
 
     nfds = snd_pcm_poll_descriptors_count(s->pcm);
     fds = calloc((size_t)nfds, sizeof(*fds));
