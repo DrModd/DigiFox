@@ -734,7 +734,10 @@ static void fill_timing(pa_stream *s)
     t->write_index_corrupt = 0;
     t->write_index = s->written;
     t->read_index_corrupt = 0;
-    t->read_index = s->written - (int64_t)s->qlen - (int64_t)d * (int64_t)s->frame;
+    /* PulseAudio meaning: read_index = what the sink has taken from the server buffer
+       (here: handed to ALSA); what ALSA still holds is sink_usec. Counting the ALSA
+       delay in both made Soloist see 0.37 s more audio buffered than there was */
+    t->read_index = s->written - (int64_t)s->qlen;
     if (t->read_index < 0) t->read_index = 0;
     t->configured_sink_usec = s->latency;
     t->configured_source_usec = 0;
