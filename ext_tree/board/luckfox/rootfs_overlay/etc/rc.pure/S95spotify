@@ -41,7 +41,7 @@ external_volume: true
 initial_volume: 100
 volume_steps: 100
 bitrate: 320
-flac_enabled: true
+flac_enabled: false
 normalisation_disabled: true
 zeroconf_enabled: true
 zeroconf_backend: avahi
