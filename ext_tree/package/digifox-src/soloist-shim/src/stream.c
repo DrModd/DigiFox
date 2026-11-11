@@ -640,14 +640,26 @@ stream_open_pcm(pa_stream *s)
         want_p = s->attr.minreq / fs;
     if (pick_period(s->pcm, hw, want_p, &period) < 0)
         { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
-    if (snd_pcm_hw_params_set_period_size(s->pcm, hw, period, 0) < 0)
-        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
+    /* DigiFox: the rockchip I2S driver (through plug) takes the period pick_period
+     * found only as "near" (it came back with a direction): the exact set failed
+     * and the card never opened. Exact first, then near. */
+    if (snd_pcm_hw_params_set_period_size(s->pcm, hw, period, 0) < 0) {
+        snd_pcm_uframes_t p2 = period;
+
+        dir = 0;
+        if (snd_pcm_hw_params_set_period_size_near(s->pcm, hw, &p2, &dir) < 0 || p2 == 0)
+            { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
+        period = p2;
+    }
     if (fs)
         want_b = s->attr.tlength / fs;
-    if (pick_buffer(s->pcm, hw, period, want_b, &buffer) < 0)
-        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
-    if (snd_pcm_hw_params_set_buffer_size(s->pcm, hw, buffer) < 0)
-        { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
+    if (pick_buffer(s->pcm, hw, period, want_b, &buffer) < 0 ||
+        snd_pcm_hw_params_set_buffer_size(s->pcm, hw, buffer) < 0) {
+        /* DigiFox: same for the buffer — whatever the driver gives near the wish */
+        buffer = want_b > 4 * period ? want_b : 4 * period;
+        if (snd_pcm_hw_params_set_buffer_size_near(s->pcm, hw, &buffer) < 0 || buffer == 0)
+            { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
+    }
     if (snd_pcm_hw_params(s->pcm, hw) < 0)
         { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     snd_pcm_hw_params_get_period_size(hw, &period, &dir);
