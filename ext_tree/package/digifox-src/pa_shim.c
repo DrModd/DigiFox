@@ -131,10 +131,11 @@ struct pa_stream {
     snd_pcm_t *pcm;
     size_t frame;                   /* bytes per frame */
     snd_pcm_uframes_t bufsize;
+    size_t tlen;                    /* bytes the "server" holds: ALSA buffer + queue (tlength) */
     pa_usec_t latency;
     int corked, paused_hw, started;
     int64_t written;                /* bytes accepted from the client */
-    uint8_t *q; size_t qlen, qcap;  /* accepted, not yet in ALSA */
+    uint8_t *q; size_t qoff, qlen, qcap;  /* accepted, not yet in ALSA: q[qoff .. qoff+qlen) */
     pa_cvolume vol;
     pa_timing_info ti;
 };
@@ -486,12 +487,18 @@ static int pcm_open(pa_stream *s, const pa_buffer_attr *attr)
     if (fmt == SND_PCM_FORMAT_UNKNOWN) return -1;
     int r = snd_pcm_open(&s->pcm, dev, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (r < 0) { D("open %s: %s", dev, snd_strerror(r)); s->pcm = NULL; return -1; }
-    /* buffer: the client's target length if sane, else 200 ms */
+    /* like a PulseAudio server: hold tlength bytes (client's, else 2 s; 100 ms..4 s) —
+       200 ms of it in the ALSA buffer, the rest queued here. Soloist keeps ~1 s in the
+       sink and writes only in big chunks: with just the 200 ms ALSA buffer it ran dry */
     unsigned lat = 200000;
-    if (attr && attr->tlength != (uint32_t)-1 && attr->tlength > 0) {
-        pa_usec_t u = pa_bytes_to_usec(attr->tlength, &s->ss);
-        if (u >= 40000 && u <= 2000000) lat = (unsigned)u;
-    }
+    pa_usec_t tl = 2000000;
+    if (attr && attr->tlength != (uint32_t)-1 && attr->tlength > 0) tl = pa_bytes_to_usec(attr->tlength, &s->ss);
+    if (tl < 100000) tl = 100000;
+    if (tl > 4000000) tl = 4000000;
+    s->tlen = pa_usec_to_bytes(tl, &s->ss);
+    D("buffer attr: maxlength %d tlength %d prebuf %d minreq %d -> hold %zu bytes (%llu ms)",
+      attr ? (int)attr->maxlength : -2, attr ? (int)attr->tlength : -2, attr ? (int)attr->prebuf : -2,
+      attr ? (int)attr->minreq : -2, s->tlen, (unsigned long long)(tl / 1000));
     r = snd_pcm_set_params(s->pcm, fmt, SND_PCM_ACCESS_RW_INTERLEAVED, s->ss.channels, s->ss.rate, 0, lat);
     if (r < 0) {
         D("set_params %u Hz: %s", s->ss.rate, snd_strerror(r));
@@ -547,7 +554,7 @@ EXPORT int pa_stream_disconnect(pa_stream *s)
 {
     T();
     if (s->pcm) { snd_pcm_drop(s->pcm); snd_pcm_close(s->pcm); s->pcm = NULL; }
-    s->qlen = 0;
+    s->qlen = s->qoff = 0;
     s->refs++;                      /* list_remove may drop the last list ref */
     list_remove(s);
     stream_set_state(s, PA_STREAM_TERMINATED);
@@ -572,16 +579,17 @@ static snd_pcm_sframes_t pcm_feed(pa_stream *s)
     }
     if (s->corked) return 0;
     while (s->qlen >= s->frame) {
-        snd_pcm_sframes_t n = snd_pcm_writei(s->pcm, s->q, s->qlen / s->frame);
+        snd_pcm_sframes_t n = snd_pcm_writei(s->pcm, s->q + s->qoff, s->qlen / s->frame);
         if (n == -EAGAIN || n == 0) break;
         if (n < 0) {
-            if (snd_pcm_recover(s->pcm, (int)n, 1) < 0) { s->qlen = 0; break; }
+            if (snd_pcm_recover(s->pcm, (int)n, 1) < 0) { s->qlen = s->qoff = 0; break; }
             if (n == -EPIPE) { s->started = 0; stream_notify(s, 2); }
             continue;
         }
         size_t b = (size_t)n * s->frame;
-        memmove(s->q, s->q + b, s->qlen - b);
+        s->qoff += b;           /* no memmove per write: up to 2 s queued */
         s->qlen -= b;
+        if (!s->qlen) s->qoff = 0;
     }
     if (!s->started && snd_pcm_state(s->pcm) == SND_PCM_STATE_RUNNING) {
         D("pcm running, written %lld bytes", (long long)s->written);
@@ -603,17 +611,14 @@ EXPORT size_t pa_stream_writable_size(const pa_stream *cs)
 {
     pa_stream *s = (pa_stream *)cs;
     if (s->st != PA_STREAM_READY || !s->pcm) return (size_t)-1;
-    snd_pcm_sframes_t av;
-    if (s->corked) {
-        /* corked: fill the buffer up while the device waits */
-        snd_pcm_sframes_t d = 0;
-        if (snd_pcm_delay(s->pcm, &d) < 0) d = 0;
-        av = (snd_pcm_sframes_t)s->bufsize - d;
-    } else {
-        av = pcm_feed(s);
-    }
-    size_t b = av > 0 ? (size_t)av * s->frame : 0;
-    return b > s->qlen ? b - s->qlen : 0;
+    if (!s->corked) pcm_feed(s);
+    /* free room = tlength - (queued here + still in the ALSA buffer) */
+    snd_pcm_sframes_t d = 0;
+    snd_pcm_state_t st = snd_pcm_state(s->pcm);
+    if ((st == SND_PCM_STATE_RUNNING || st == SND_PCM_STATE_PREPARED) && snd_pcm_delay(s->pcm, &d) < 0) d = 0;
+    if (d < 0) d = 0;
+    size_t held = s->qlen + (size_t)d * s->frame;
+    return held < s->tlen ? s->tlen - held : 0;
 }
 
 EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_free_cb_t free_cb,
@@ -621,13 +626,17 @@ EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_fre
 {
     (void)offset; (void)seek;
     if (s->st != PA_STREAM_READY) { if (free_cb) free_cb((void *)data); return -PA_ERR_BADSTATE; }
+    if (s->qoff + s->qlen + nbytes > s->qcap && s->qoff) {
+        memmove(s->q, s->q + s->qoff, s->qlen);     /* compact now and then */
+        s->qoff = 0;
+    }
     if (s->qlen + nbytes > s->qcap) {
         size_t cap = (s->qlen + nbytes) * 2;
         uint8_t *q = realloc(s->q, cap);
         if (!q) { if (free_cb) free_cb((void *)data); return -PA_ERR_INTERNAL; }
         s->q = q; s->qcap = cap;
     }
-    memcpy(s->q + s->qlen, data, nbytes);
+    memcpy(s->q + s->qoff + s->qlen, data, nbytes);
     s->qlen += nbytes;
     s->written += (int64_t)nbytes;
     static unsigned nw;
@@ -694,7 +703,7 @@ EXPORT pa_operation *pa_stream_flush(pa_stream *s, pa_stream_success_cb_t cb, vo
         s->paused_hw = 0;
         s->started = 0;
     }
-    s->qlen = 0;
+    s->qlen = s->qoff = 0;
     D("flush");
     return stream_success(s, cb, ud);
 }
