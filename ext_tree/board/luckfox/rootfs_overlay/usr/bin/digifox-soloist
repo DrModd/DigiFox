@@ -43,8 +43,12 @@ fetch() {
         event "Soloist: не скачался с сайта Spotify"; rm -rf $tmp; return 1
     fi
     rm -f $DIR/soloist.new
-    if ! tar -xzf $tmp/s.tgz -C $tmp soloist 2>/dev/null || [ ! -s $tmp/soloist ]; then
-        event "Soloist: архив не распаковался"; rm -rf $tmp; return 1
+    # busybox tar на Фоксе без -z: распаковать gzip отдельно; весь архив (3 файла) —
+    # имя файла внутри у busybox tar выбирается не всегда
+    sz=$(wc -c < $tmp/s.tgz 2>/dev/null)
+    gzip -dc $tmp/s.tgz 2>/dev/null | ( cd $tmp && tar -xf - ) 2>/dev/null
+    if [ ! -s $tmp/soloist ]; then
+        event "Soloist: архив не распаковался (скачано ${sz:-0} байт)"; rm -rf $tmp; return 1
     fi
     mv $tmp/soloist $DIR/soloist.new && chmod 755 $DIR/soloist.new
     rm -rf $tmp
