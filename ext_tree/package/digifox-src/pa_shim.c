@@ -24,6 +24,7 @@
 #include <alsa/asoundlib.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +47,14 @@ static void D(const char *f, ...)
 
 /* ------------------------------------------------------------------ jobs */
 typedef void (*job_fn)(void *a, void *b, void *c, intptr_t i);
-struct job { struct job *next; job_fn fn; void *a, *b, *c; intptr_t i; };
+struct job { struct job *next; job_fn fn; void *a, *b, *c; intptr_t i; uint64_t due; };
+
+static uint64_t now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
+}
 
 struct pa_threaded_mainloop {
     pa_mainloop_api api;            /* first: pa_context_new() gets &api, api.userdata = this */
@@ -59,14 +67,22 @@ struct pa_threaded_mainloop {
     struct pa_stream *streams;
 };
 
-static void post(pa_threaded_mainloop *m, job_fn fn, void *a, void *b, void *c, intptr_t i)
+/* delay_ms > 0: run not before that — like a reply from a real PulseAudio server.
+   Soloist asks for timing info again as soon as the previous answer arrives: answered
+   at once, that was a busy loop (its threads are real-time: the Fox watchdog rebooted it) */
+static void post_at(pa_threaded_mainloop *m, unsigned delay_ms, job_fn fn, void *a, void *b, void *c, intptr_t i)
 {
     struct job *j = calloc(1, sizeof *j);
     if (!j) return;
     j->fn = fn; j->a = a; j->b = b; j->c = c; j->i = i;
+    j->due = delay_ms ? now_ms() + delay_ms : 0;
     if (m->tail) m->tail->next = j; else m->head = j;
     m->tail = j;
     pthread_cond_signal(&m->wake);
+}
+static void post(pa_threaded_mainloop *m, job_fn fn, void *a, void *b, void *c, intptr_t i)
+{
+    post_at(m, 0, fn, a, b, c, i);
 }
 
 /* ------------------------------------------------------------- objects */
@@ -133,21 +149,34 @@ static void *loop(void *arg)
     pa_threaded_mainloop *m = arg;
     pthread_mutex_lock(&m->mtx);
     while (!m->quit) {
-        while (m->head) {
-            struct job *j = m->head;
-            m->head = j->next;
-            if (!m->head) m->tail = NULL;
+        /* run the due jobs; callbacks may post new ones (they go after the kept ones) */
+        struct job *list = m->head, *keep = NULL, **kt = &keep;
+        m->head = m->tail = NULL;
+        uint64_t now = now_ms();
+        while (list) {
+            struct job *j = list;
+            list = j->next; j->next = NULL;
+            if (j->due > now) { *kt = j; kt = &j->next; continue; }
             j->fn(j->a, j->b, j->c, j->i);
             free(j);
+        }
+        if (keep) {
+            *kt = m->head;
+            if (!m->head) m->tail = (struct job *)((char *)kt - offsetof(struct job, next));
+            m->head = keep;
         }
         for (pa_stream *s = m->streams; s; s = s->next) stream_service(s);
         /* clients poll writable_size between waits: wake them regularly */
         pthread_cond_broadcast(&m->cond);
+        /* sleep 5 ms (less if a delayed job is due sooner); new jobs wake at once */
+        int due_now = 0;
+        for (struct job *j = m->head; j; j = j->next) if (j->due <= now_ms()) { due_now = 1; break; }
+        if (due_now) continue;
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_nsec += 5 * 1000000;
         if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
-        if (!m->head && !m->quit) pthread_cond_timedwait(&m->wake, &m->mtx, &ts);
+        if (!m->quit) pthread_cond_timedwait(&m->wake, &m->mtx, &ts);
     }
     pthread_mutex_unlock(&m->mtx);
     return NULL;
@@ -205,7 +234,6 @@ EXPORT void pa_threaded_mainloop_unlock(pa_threaded_mainloop *m) { pthread_mutex
 EXPORT void pa_threaded_mainloop_wait(pa_threaded_mainloop *m)   { pthread_cond_wait(&m->cond, &m->mtx); }
 EXPORT void pa_threaded_mainloop_signal(pa_threaded_mainloop *m, int wait_for_accept)
 {
-    T();
     (void)wait_for_accept;
     pthread_cond_broadcast(&m->cond);
 }
@@ -557,7 +585,6 @@ static void stream_service(pa_stream *s) { if (s->st == PA_STREAM_READY) pcm_fee
 
 EXPORT size_t pa_stream_writable_size(const pa_stream *cs)
 {
-    T();
     pa_stream *s = (pa_stream *)cs;
     if (s->st != PA_STREAM_READY || !s->pcm) return (size_t)-1;
     snd_pcm_sframes_t av;
@@ -600,13 +627,17 @@ static void job_stream_success(void *a, void *b, void *c_, intptr_t i)
     op_done(s->ctx->m, o);
     stream_unref(s);
 }
-static pa_operation *stream_success(pa_stream *s, pa_stream_success_cb_t cb, void *ud)
+static pa_operation *stream_success_at(pa_stream *s, unsigned delay_ms, pa_stream_success_cb_t cb, void *ud)
 {
     pa_operation *o = op_new();
     if (!o) return NULL;
     s->refs++;
-    post(s->ctx->m, job_stream_success, s, o, ud, (intptr_t)(uintptr_t)cb);
+    post_at(s->ctx->m, delay_ms, job_stream_success, s, o, ud, (intptr_t)(uintptr_t)cb);
     return o;
+}
+static pa_operation *stream_success(pa_stream *s, pa_stream_success_cb_t cb, void *ud)
+{
+    return stream_success_at(s, 0, cb, ud);
 }
 
 EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t cb, void *ud)
@@ -676,15 +707,13 @@ static void fill_timing(pa_stream *s)
 
 EXPORT const pa_timing_info *pa_stream_get_timing_info(pa_stream *s)
 {
-    T();
     fill_timing(s);
     return &s->ti;
 }
 EXPORT pa_operation *pa_stream_update_timing_info(pa_stream *s, pa_stream_success_cb_t cb, void *ud)
 {
-    T();
     fill_timing(s);
-    return stream_success(s, cb, ud);
+    return stream_success_at(s, 20, cb, ud);      /* a server round trip, not a busy loop */
 }
 
 /* ------------------------------------------------------------ operation */
