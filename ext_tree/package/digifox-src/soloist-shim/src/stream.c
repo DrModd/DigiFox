@@ -664,6 +664,21 @@ stream_open_pcm(pa_stream *s)
         { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
     snd_pcm_hw_params_get_period_size(hw, &period, &dir);
     snd_pcm_hw_params_get_buffer_size(hw, &buffer);
+    /* DigiFox: on the rockchip I2S (period 8192, buffer 131072 only) the hw_params
+     * copy answered period 0 — writes went 4 frames at a time and the card ran dry
+     * at once ("poll error, pcm XRUN"). Ask the opened PCM itself. */
+    {
+        snd_pcm_uframes_t rb = 0, rp = 0;
+
+        if (snd_pcm_get_params(s->pcm, &rb, &rp) == 0) {
+            if (rp) period = rp;
+            if (rb) buffer = rb;
+        }
+        if (period == 0 && buffer)
+            period = buffer / 4;
+        if (period == 0)
+            { shim_log("pcm setup of %s failed at stream.c:%d\n", dev, __LINE__); goto fail; }
+    }
     snd_pcm_hw_params_free(hw);
     hw = NULL;
 
