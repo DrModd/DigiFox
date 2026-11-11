@@ -40,9 +40,19 @@ jobs:
 
       - name: Host packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git rsync build-essential cmake device-tree-compiler bc binutils \
-            libncurses-dev clang libclang-dev file zip unzip cpio wget python3 patch perl
+          PKGS="git rsync build-essential cmake device-tree-compiler bc binutils libncurses-dev
+                clang libclang-dev file zip unzip cpio wget python3 patch perl"
+          # the runner's Azure Ubuntu mirror sometimes stops resolving (builds 138, 140):
+          # after a failed try use archive.ubuntu.com directly
+          for try in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y $PKGS && exit 0
+            echo "apt failed (try $try), switching to archive.ubuntu.com"
+            for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+              [ -f "$f" ] && sudo sed -i 's#https\?://azure\.archive\.ubuntu\.com/ubuntu/\?#http://archive.ubuntu.com/ubuntu/#g; s#mirror+file:/etc/apt/apt-mirrors.txt#http://archive.ubuntu.com/ubuntu/#g' "$f"
+            done
+            sleep 20
+          done
+          exit 1
 
       - name: Build id
         id: ver
