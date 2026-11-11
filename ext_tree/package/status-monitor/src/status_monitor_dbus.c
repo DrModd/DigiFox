@@ -243,6 +243,7 @@ void get_active_service(char* service, pid_t *pid) {
         {"squeezelite", "lms"},
         {"shairport-sync", "shairport"},
         {"librespot", "spotify"},
+        {"soloist", "spotify"},          /* Spotify Soloist (DigiFox) */
         {"qobuz-connect", "qobuz"},
         {NULL, NULL}
     };

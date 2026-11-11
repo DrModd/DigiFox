@@ -98,6 +98,17 @@
         <div class="hint" data-t="mclkHint">Частота MCLK на усилитель. Меняется сразу.</div>
     </section>
 
+    <section class="panel">
+        <div class="set-head"><div class="cap grow">SPOTIFY CONNECT</div><div class="set-val" id="v-solo"></div></div>
+        <div class="set-label" data-t="soloKey">Ключ Spotify Soloist (API key)</div>
+        <input class="text" type="password" id="solo-key" autocomplete="off" spellcheck="false" aria-label="Ключ Spotify Soloist">
+        <div class="row2 tight">
+            <button class="hifi" id="solo-clear" data-t="soloClear">УБРАТЬ КЛЮЧ</button>
+            <button class="hifi on" id="solo-save" data-t="soloSave">СОХРАНИТЬ</button>
+        </div>
+        <div class="hint" data-t="soloHint">Spotify отказывает в треках сторонним плеерам на части аккаунтов. С ключом Фокс играет через официальный плеер Spotify (Soloist), в том числе без потерь. Ключ — один раз: developer.spotify.com → Soloist API Key (нужен Premium). Без ключа работает прежний плеер.</div>
+    </section>
+
     <footer class="foot">DigiFox v<?php echo htmlspecialchars(VERSION); ?></footer>
 </main>
 

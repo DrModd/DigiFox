@@ -7,7 +7,8 @@
 //   aplayer   (веб-радио и файлы APlayer)    — его API на :7778 (Pause/Next/Prev; радио: стоп/продолжить)
 //   raat      (Roon Ready)                   — MPRIS по D-Bus: транспорт hifiberry в raat_app (/etc/raat.conf)
 //   qobuz     (Qobuz Connect)                — FIFO /tmp/qobuz_ctl, его читает libassert_hook.so внутри плеера
-//   spotify   (Spotify Connect)              — REST API go-librespot на 127.0.0.1:3678 (у прежнего librespot API нет)
+//   spotify   (Spotify Connect)              — Spotify Soloist: soloist ctl (WebSocket 127.0.0.1:3679);
+//                                              go-librespot: REST API на 127.0.0.1:3678 (у прежнего librespot API нет)
 // Остальные (NAA, AirPlay, LMS, APScream, aprenderer) — "ERR unsupported".
 header('Content-Type: text/plain; charset=utf-8');
 header('Cache-Control: no-store');
@@ -87,8 +88,18 @@ function ctl_qobuz($cmd) {
     return $rc === 0 ? 'OK qobuz' : 'ERR qobuz_not_running';
 }
 
-// --- Spotify Connect (go-librespot) ------------------------------------------
+// --- Spotify Connect: Spotify Soloist (soloist ctl) или go-librespot (REST) ---
+function ctl_soloist($cmd) {
+    if ($cmd === 'toggle') {
+        $p = preg_split('/\s+/', trim((string)@file_get_contents('/tmp/np_prog')));
+        $cmd = (($p[2] ?? '') === 'play') ? 'pause' : 'play';
+    }
+    exec('timeout 5 /usr/bin/digifox-soloist ctl -w 127.0.0.1:3679 ' . escapeshellarg($cmd) . ' 2>&1', $o, $rc);
+    return $rc === 0 ? 'OK spotify' : 'ERR spotify_' . $rc;
+}
 function ctl_spotify($cmd) {
+    exec('pidof soloist', $po, $prc);
+    if ($prc === 0) return ctl_soloist($cmd);
     $p = ['toggle' => 'playpause', 'next' => 'next', 'prev' => 'prev'][$cmd];
     $ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => "Content-Type: application/json\r\n",
                                              'content' => '{}', 'timeout' => 5, 'ignore_errors' => true]]);

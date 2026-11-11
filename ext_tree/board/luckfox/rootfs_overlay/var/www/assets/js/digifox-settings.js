@@ -22,6 +22,8 @@
         sub: { std: 'stereo', '8ch': '8 channels', lr: 'dual mono', plr: 'dual mono, balanced' }
     };
     var EN_TEXT = {
+        soloKey: 'Spotify Soloist key (API key)', soloSave: 'SAVE', soloClear: 'REMOVE KEY',
+        soloHint: 'Spotify refuses tracks to third-party players on some accounts. With the key the Fox plays through the official Spotify player (Soloist), lossless too. Get the key once: developer.spotify.com → Soloist API Key (Premium needed). Without a key the previous player is used.',
         title: 'SETTINGS',
         needReboot: 'The clock change takes effect after the Fox reboots', reboot: 'REBOOT',
         clock: 'CLOCK SOURCE', output: 'OUTPUT', swaps: 'SWAPS',
@@ -218,6 +220,35 @@
         }).catch(function (e) { delete ampPending[k]; status(e.message); renderAmp(); });
     }
 
+    // ---------------- Spotify Soloist — soloist.php ----------------
+    var solo = null, soloBusy = false;
+    function renderSolo() {
+        var v = $('v-solo'), k = $('solo-key');
+        if (!v) return;
+        v.textContent = !solo ? '' : solo.active === 'soloist' ? 'Soloist ' + solo.version
+            : solo.key ? (solo.version ? 'Soloist ' + solo.version + ' — не запущен' : 'ключ есть') : (RU ? 'без ключа' : 'no key');
+        k.placeholder = solo && solo.key ? (RU ? 'ключ сохранён' : 'key saved') : (RU ? 'вставьте ключ' : 'paste the key');
+        $('solo-save').disabled = soloBusy;
+        $('solo-clear').disabled = soloBusy || !(solo && solo.key);
+    }
+    function loadSolo() {
+        return fetch('soloist.php', { cache: 'no-store' }).then(function (r) { return r.json(); })
+            .then(function (j) { solo = j; }).catch(function () {}).then(renderSolo);
+    }
+    function soloPost(body, msg) {
+        if (soloBusy) return;
+        soloBusy = true; renderSolo(); status(msg, true);
+        fetch('soloist.php', {
+            method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body
+        }).then(function (r) {
+            return r.json().catch(function () { return {}; }).then(function (j) {
+                if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+                solo = j; $('solo-key').value = '';
+                status(RU ? 'Готово' : 'Done');
+            });
+        }).catch(function (e) { status(e.message); }).then(function () { soloBusy = false; loadSolo(); });
+    }
+
     function init() {
         if (!RU) {
             var ts = document.querySelectorAll('[data-t]');
@@ -241,6 +272,17 @@
             abs[a].addEventListener('click', function () { setAmp(this.getAttribute('data-a'), this.getAttribute('data-v')); });
         }
         renderAmp(); loadAmp();
+        if ($('solo-save')) {
+            $('solo-save').addEventListener('click', function () {
+                var k = $('solo-key').value.trim();
+                if (!k) { status(RU ? 'Вставьте ключ' : 'Paste the key'); return; }
+                soloPost('action=save&key=' + encodeURIComponent(k), RU ? 'Сохраняю ключ, скачиваю Soloist…' : 'Saving, downloading Soloist…');
+            });
+            $('solo-clear').addEventListener('click', function () {
+                soloPost('action=clear', RU ? 'Убираю ключ…' : 'Removing the key…');
+            });
+            loadSolo();
+        }
         setInterval(function () { if (document.visibilityState !== 'hidden') loadAmp(); }, 5000);
         var fbs = document.querySelectorAll('[data-f]');
         for (var q = 0; q < fbs.length; q++) {

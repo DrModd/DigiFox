@@ -314,7 +314,7 @@ input[type=range]:disabled::-moz-range-progress { background: var(--faint); }
 .hifi.wide { width: 100%; margin-top: 12px; }
 .alarm-top { display: flex; gap: 8px; margin-top: 10px; }
 .alarm-top .hifi { width: 96px; flex: none; }
-input[type=time], select {
+input[type=time], input.text, select {
     flex: 1;
     min-width: 0;
     width: 100%;
@@ -329,7 +329,8 @@ input[type=time], select {
 }
 input[type=time] { font-family: var(--mono); font-size: 22px; font-variant-numeric: tabular-nums; }
 select { margin-top: 6px; }
-input[type=time]:focus-visible, select:focus-visible { outline: 2px solid var(--dim); outline-offset: 2px; }
+input.text { margin-top: 6px; font-family: var(--mono); font-size: 14px; }
+input[type=time]:focus-visible, input.text:focus-visible, select:focus-visible { outline: 2px solid var(--dim); outline-offset: 2px; }
 .file {
     display: flex; align-items: center;
     height: 46px; margin-top: 10px; padding: 0 12px;

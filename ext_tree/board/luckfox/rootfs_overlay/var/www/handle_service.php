@@ -58,7 +58,8 @@ $players = [
     'apscream'   => ['process' => 'apscream',        'script' => 'S95apscream'],
     'shairport'  => ['process' => 'shairport-sync',  'script' => 'S95shairport'],
     'lms'        => ['process' => 'squeezelite',     'script' => 'S95squeezelite'],
-    'spotify'    => ['process' => 'librespot',       'script' => 'S95spotify'],
+    // Spotify Soloist или (go-)librespot: S95spotify пишет PID запущенного в /tmp/spotify.pid
+    'spotify'    => ['process' => 'librespot',       'script' => 'S95spotify', 'pidfile' => '/tmp/spotify.pid'],
     'qobuz'      => ['process' => 'qobuz-connect',   'script' => 'S95qobuz'],
 ];
 
@@ -95,7 +96,7 @@ try {
     executeCommand('[ -x /etc/init.d/S95player ] && /etc/init.d/S95player stop || true');
 
     // Hard-stop all known player processes (fallback)
-    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'qobuz-connect', 'avahi-publish-service']);
+    stopProcessGroup(['networkaudiod', 'raat_app', 'mpd', 'upmpdcli', 'ap2renderer', 'aplayer', 'apscream', 'shairport-sync', 'squeezelite', 'librespot', 'soloist', 'qobuz-connect', 'avahi-publish-service']);
 
     // Create one stable managed symlink, do not touch other S95 services
     executeCommand('rm -f /etc/init.d/S95player');

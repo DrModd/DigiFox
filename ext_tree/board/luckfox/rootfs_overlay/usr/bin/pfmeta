@@ -9,6 +9,7 @@
 #   pfmeta qobuz      читает вывод qobuz-connect со stdin (S95qobuz: "... 2>&1 | pfmeta qobuz")
 #   pfmeta spotify    вызывается librespot --onevent (переменные PLAYER_EVENT, NAME, ARTISTS, ALBUM)
 #   pfmeta spotify-api  опрос API go-librespot (127.0.0.1:3678/status) раз в 2 с (S95spotify)
+#   pfmeta spotify-soloist  события Spotify Soloist (soloist-meta.php) (S95spotify)
 #   pfmeta airplay    фоновый разбор канала метаданных shairport-sync (запускает pfctl serve)
 #   pfmeta roon       опрос MPRIS Roon Ready (raat_app, транспорт hifiberry) раз в 2 с (S95roonready)
 #   pfmeta art <ключ> <url>   поиск обложки и длительности (iTunes) -> /tmp/np_art
@@ -159,6 +160,19 @@ spotify-api)
             [ -n "$pos" ] && prog "$pos" $ps
             lst=$ps
         fi
+        sleep 2
+    done
+    rm -f /tmp/pfmeta_spotify.pid
+    ;;
+
+spotify-soloist)
+    # Spotify Soloist: его события (soloist ctl trace, WebSocket 127.0.0.1:3679) разбирает
+    # soloist-meta.php (JSON); пока Soloist работает — заново, если поток событий оборвался
+    if [ -f /tmp/pfmeta_spotify.pid ] && kill -0 "$(cat /tmp/pfmeta_spotify.pid)" 2>/dev/null; then exit 0; fi
+    echo $$ > /tmp/pfmeta_spotify.pid
+    while pidof soloist >/dev/null; do
+        /usr/bin/digifox-soloist ctl -w 127.0.0.1:3679 trace 2>/dev/null |
+            /usr/bin/php-cgi -q -d max_execution_time=0 -f /usr/share/digifox/soloist-meta.php >/dev/null 2>&1
         sleep 2
     done
     rm -f /tmp/pfmeta_spotify.pid

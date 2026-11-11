@@ -1,0 +1,91 @@
+#!/bin/sh
+#
+# digifox-soloist — официальный плеер Spotify Connect (Spotify Soloist) на Фоксе.
+#
+#   digifox-soloist ensure    есть ли рабочий Soloist; нет или устарел — скачать (код 0 — есть)
+#   digifox-soloist fetch     скачать заново (последняя сборка с сайта Spotify)
+#   digifox-soloist status    версия, дата скачивания, ключ
+#   digifox-soloist ctl ...   управление запущенным плеером (play|pause|next|prev|now ...)
+#
+# Почему не в прошивке: Spotify запрещает распространять Soloist, поэтому Фокс скачивает
+# его сам с soloist-builds.spotifycdn.com. Каждая сборка Soloist работает 90 дней,
+# потом выходит с кодом 10 — Фокс берёт новую раньше (через 60 дней) и при коде 10.
+#
+# Ключ (API key) — свой у каждого пользователя: developer.spotify.com → Soloist API Key,
+# аккаунт Premium. Вводится в вебе (Настройки → Spotify), лежит в /etc/digifox/soloist.key.
+#
+# Файлы:  /var/lib/digifox/soloist/soloist      плеер (≈29 МБ, раздел userdata)
+#         /var/lib/digifox/soloist/fetched       когда скачан (unix-время)
+#         /var/lib/digifox/soloist/cache/        кэш треков (-z 100 МБ)
+#         /etc/digifox/soloist/                  вход в Spotify, ws.port (данные Soloist)
+#         /usr/lib/digifox/soloist/libpulse.so.0 звук Soloist прямо в ALSA (pa_shim.c)
+
+DIR=/var/lib/digifox/soloist
+BIN=$DIR/soloist
+DATA=/etc/digifox/soloist
+KEY=/etc/digifox/soloist.key
+URL=https://soloist-builds.spotifycdn.com/soloist_release_arm32.tar.gz
+MAX_AGE=$((60 * 86400))
+
+event() { echo "$(date '+%d.%m %H:%M:%S') spotify: $*" >> /tmp/digifox_events.log; }
+
+fetch() {
+    mkdir -p $DIR || return 1
+    # место: архив ~13 МБ в /tmp (RAM), распакованный плеер ~29 МБ рядом со старым
+    free=$(df -k $DIR 2>/dev/null | awk 'NR==2 {print int($4/1024)}')
+    old=0; [ -f $BIN ] && old=$(( $(wc -c < $BIN) / 1048576 ))
+    if [ "$((${free:-0} + old))" -lt 35 ]; then
+        event "Soloist: мало места (${free} МБ свободно, нужно ~35)"; return 1
+    fi
+    tmp=/tmp/soloist-dl.$$
+    rm -rf $tmp; mkdir -p $tmp
+    if ! wget -q -T 60 -O $tmp/s.tgz "$URL" 2>/dev/null; then
+        event "Soloist: не скачался с сайта Spotify"; rm -rf $tmp; return 1
+    fi
+    rm -f $DIR/soloist.new
+    if ! tar -xzf $tmp/s.tgz -C $tmp soloist 2>/dev/null || [ ! -s $tmp/soloist ]; then
+        event "Soloist: архив не распаковался"; rm -rf $tmp; return 1
+    fi
+    mv $tmp/soloist $DIR/soloist.new && chmod 755 $DIR/soloist.new
+    rm -rf $tmp
+    if ! $DIR/soloist.new --version >/dev/null 2>&1; then
+        event "Soloist: скачанный плеер не запускается на Фоксе"; rm -f $DIR/soloist.new; return 1
+    fi
+    mv $DIR/soloist.new $BIN
+    date +%s > $DIR/fetched
+    sync
+    event "Soloist скачан: $($BIN --version 2>/dev/null | head -1)"
+    return 0
+}
+
+ensure() {
+    if [ -x $BIN ]; then
+        age=$(( $(date +%s) - $(cat $DIR/fetched 2>/dev/null || echo 0) ))
+        # часы ещё не синхронизированы (1970) — возраст не считать
+        [ "$(date +%Y)" -lt 2025 ] && return 0
+        [ $age -lt $MAX_AGE ] && return 0
+        fetch && return 0
+        # не скачалось — старый ещё может работать (до 90 дней)
+        return 0
+    fi
+    fetch
+}
+
+case "$1" in
+    ensure) ensure ;;
+    fetch)  fetch ;;
+    status)
+        if [ -x $BIN ]; then
+            echo "version: $($BIN --version 2>/dev/null | head -1)"
+            echo "fetched: $(cat $DIR/fetched 2>/dev/null)"
+        else
+            echo "version: -"
+        fi
+        [ -s $KEY ] && echo "key: yes" || echo "key: no"
+        pidof soloist >/dev/null && echo "running: yes" || echo "running: no" ;;
+    ctl)
+        shift
+        [ -x $BIN ] || exit 2
+        exec $BIN ctl -D $DATA "$@" ;;
+    *) echo "usage: digifox-soloist ensure|fetch|status|ctl ..."; exit 1 ;;
+esac

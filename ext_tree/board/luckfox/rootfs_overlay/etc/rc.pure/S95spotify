@@ -23,6 +23,36 @@ start() {
     
     NAME=`hostname`_`ifconfig eth0 | awk '/inet addr/{print substr($2,6)}'`
 
+    # DigiFox: Spotify Soloist — официальный плеер Spotify, если введён ключ (Настройки →
+    # Spotify). go-librespot и librespot Spotify на части аккаунтов не отдаёт ключи треков
+    # ("audio key error" / "code 1"); Soloist работает на движке приложений Spotify.
+    # Нет ключа, не скачался или не запустился — go-librespot, как раньше.
+    SKEY=/etc/digifox/soloist.key
+    SDIR=/var/lib/digifox/soloist
+    # скачать или обновить (через 60 дней) — в фоне, запуск плеера не ждёт
+    [ -s $SKEY ] && { /usr/bin/digifox-soloist ensure >/dev/null 2>&1 & }
+    if [ -s $SKEY ] && [ ! -f /etc/digifox/spotify-legacy ] && [ -x $SDIR/soloist ]; then
+        mkdir -p /etc/digifox/soloist $SDIR/cache
+        # звук: libpulse.so.0 из /usr/lib/digifox/soloist — прямо в ALSA, без PulseAudio;
+        # громкость Spotify не трогает сэмплы (громкость — у усилителя), -i 100
+        LD_LIBRARY_PATH=/usr/lib/digifox/soloist \
+        $SDIR/soloist -n "$NAME" -k "$(cat $SKEY)" -D /etc/digifox/soloist \
+            -C $SDIR/cache -z 100 -i 100 -w 127.0.0.1:3679 > /tmp/soloist.log 2>&1 &
+        SPID=$!
+        echo $SPID > /tmp/spotify.pid
+        sleep 3
+        if kill -0 $SPID 2>/dev/null; then
+            renice -15 $SPID 2>/dev/null
+            ( sleep 2; /usr/bin/pfmeta spotify-soloist ) >/dev/null 2>&1 &
+            echo "OK (Spotify Soloist)"
+            return 0
+        fi
+        wait $SPID 2>/dev/null; rc=$?
+        # 10 — сборка устарела (90 дней): скачать новую в фоне, сейчас — go-librespot
+        [ $rc = 10 ] && { /usr/bin/digifox-soloist fetch >/dev/null 2>&1 & }
+        echo "$(date '+%d.%m %H:%M:%S') spotify: Soloist не запустился (код $rc: $(tail -1 /tmp/soloist.log)) — go-librespot" >> /tmp/digifox_events.log
+    fi
+
     # DigiFox: go-librespot (REST API: кнопки плеера с пульта и из приложения, точный
     # трек и позиция). Не поднялся — прежний librespot. Вернуть прежний насовсем:
     # touch /etc/digifox/spotify-legacy
@@ -58,6 +88,7 @@ EOF
         # падал сразу (оставался старый librespot, которому Spotify не отдаёт ключи треков)
         $GLR --config_dir $CFG > /tmp/librespot.log 2>&1 &
         GPID=$!
+        echo $GPID > /tmp/spotify.pid
         sleep 3
         if kill -0 $GPID 2>/dev/null; then
             renice -15 $GPID 2>/dev/null
@@ -75,6 +106,7 @@ EOF
 	--volume-ctrl fixed \
         --name $NAME > /tmp/librespot.log 2>&1 &
     LIBRESPOT_PID=$!
+    echo $LIBRESPOT_PID > /tmp/spotify.pid
     renice -15 $LIBRESPOT_PID 2>/dev/null
     sleep 0.5
     if ! kill -0 $LIBRESPOT_PID 2>/dev/null; then
@@ -88,7 +120,9 @@ EOF
 }
 
 stop() {
+    killall soloist 2>/dev/null; sleep 0.3; killall -9 soloist 2>/dev/null
     killall -9 librespot 2>/dev/null
+    rm -f /tmp/spotify.pid
     [ -f /tmp/pfmeta_spotify.pid ] && kill "$(cat /tmp/pfmeta_spotify.pid)" 2>/dev/null; rm -f /tmp/pfmeta_spotify.pid
 }
 restart() {

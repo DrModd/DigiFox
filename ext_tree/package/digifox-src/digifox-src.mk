@@ -22,6 +22,10 @@ define DIGIFOX_SRC_BUILD_CMDS
 		-o $(@D)/raat_card.so $(@D)/raat_card.c -ldl
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s -Wall \
 		-o $(@D)/libasound_scope_digilvl.so $(@D)/scope_digilvl.c -lasound
+	# Spotify Soloist: libpulse.so.0 прямо в ALSA (pa_shim.c, заголовки pulse/ — LGPL-2.1+)
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s -Wall -fvisibility=hidden \
+		-I$(@D) -Wl,-soname,libpulse.so.0 \
+		-o $(@D)/libpulse.so.0 $(@D)/pa_shim.c -lasound -lpthread
 endef
 
 define DIGIFOX_SRC_INSTALL_TARGET_CMDS
@@ -31,6 +35,7 @@ define DIGIFOX_SRC_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/raat_card.so $(TARGET_DIR)/usr/lib/digifox/raat_card.so
 	$(INSTALL) -D -m 0755 $(@D)/libasound_scope_digilvl.so \
 		$(TARGET_DIR)/usr/lib/alsa-lib/libasound_scope_digilvl.so
+	$(INSTALL) -D -m 0755 $(@D)/libpulse.so.0 $(TARGET_DIR)/usr/lib/digifox/soloist/libpulse.so.0
 endef
 
 $(eval $(generic-package))

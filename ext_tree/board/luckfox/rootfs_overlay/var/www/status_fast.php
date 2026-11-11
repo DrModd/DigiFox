@@ -76,6 +76,7 @@ $services = [
     'lms'         => 'squeezelite',
     'shairport'   => 'shairport-sync',
     'spotify'     => 'librespot',
+    'spotify_solo' => 'soloist',      // Spotify Soloist -> spotify (ниже)
     'qobuz'       => 'qobuz-connect',
 ];
 
@@ -115,7 +116,7 @@ if (!empty($output)) {
     $found_process = trim($output);
     foreach ($services as $key => $process) {
         if ($found_process === $process) {
-            $status['active_service'] = $key;
+            $status['active_service'] = $key === 'spotify_solo' ? 'spotify' : $key;
             break;
         }
     }
