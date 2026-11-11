@@ -54,7 +54,9 @@ server:
   address: 127.0.0.1
   port: 3678
 EOF
-        $GLR -config_dir $CFG > /tmp/librespot.log 2>&1 &
+        # 0.10.x: флаги в стиле pflag — «-config_dir» читался как «-c onfig_dir» и go-librespot
+        # падал сразу (оставался старый librespot, которому Spotify не отдаёт ключи треков)
+        $GLR --config_dir $CFG > /tmp/librespot.log 2>&1 &
         GPID=$!
         sleep 3
         if kill -0 $GPID 2>/dev/null; then
