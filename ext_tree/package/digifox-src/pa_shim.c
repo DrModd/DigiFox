@@ -32,6 +32,7 @@
 #include <errno.h>
 
 #define EXPORT __attribute__((visibility("default")))
+#define T() D("> %s", __func__)
 
 static int dbg = -1;
 static void D(const char *f, ...)
@@ -154,6 +155,7 @@ static void *loop(void *arg)
 
 EXPORT pa_threaded_mainloop *pa_threaded_mainloop_new(void)
 {
+    T();
     pa_threaded_mainloop *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     pthread_mutexattr_t a;
@@ -170,6 +172,7 @@ EXPORT pa_threaded_mainloop *pa_threaded_mainloop_new(void)
 EXPORT pa_mainloop_api *pa_threaded_mainloop_get_api(pa_threaded_mainloop *m) { return &m->api; }
 EXPORT int pa_threaded_mainloop_start(pa_threaded_mainloop *m)
 {
+    T();
     m->quit = 0;
     if (pthread_create(&m->th, NULL, loop, m)) return -1;
     m->running = 1;
@@ -177,6 +180,7 @@ EXPORT int pa_threaded_mainloop_start(pa_threaded_mainloop *m)
 }
 EXPORT void pa_threaded_mainloop_stop(pa_threaded_mainloop *m)
 {
+    T();
     if (!m->running) return;
     pthread_mutex_lock(&m->mtx);
     m->quit = 1;
@@ -187,6 +191,7 @@ EXPORT void pa_threaded_mainloop_stop(pa_threaded_mainloop *m)
 }
 EXPORT void pa_threaded_mainloop_free(pa_threaded_mainloop *m)
 {
+    T();
     if (!m) return;
     pa_threaded_mainloop_stop(m);
     while (m->head) { struct job *j = m->head; m->head = j->next; free(j); }
@@ -200,6 +205,7 @@ EXPORT void pa_threaded_mainloop_unlock(pa_threaded_mainloop *m) { pthread_mutex
 EXPORT void pa_threaded_mainloop_wait(pa_threaded_mainloop *m)   { pthread_cond_wait(&m->cond, &m->mtx); }
 EXPORT void pa_threaded_mainloop_signal(pa_threaded_mainloop *m, int wait_for_accept)
 {
+    T();
     (void)wait_for_accept;
     pthread_cond_broadcast(&m->cond);
 }
@@ -222,6 +228,7 @@ static void ctx_state(pa_context *c, pa_context_state_t st)
 
 EXPORT pa_context *pa_context_new(pa_mainloop_api *api, const char *name)
 {
+    T();
     pa_context *c = calloc(1, sizeof *c);
     if (!c) return NULL;
     c->refs = 1;
@@ -235,8 +242,12 @@ EXPORT void pa_context_set_state_callback(pa_context *c, pa_context_notify_cb_t 
 { c->state_cb = cb; c->state_ud = ud; }
 EXPORT int pa_context_connect(pa_context *c, const char *server, pa_context_flags_t flags, const pa_spawn_api *api)
 {
+    T();
     (void)server; (void)flags; (void)api;
-    ctx_state(c, PA_CONTEXT_CONNECTING);
+    /* PulseAudio: connecting already inside pa_context_connect (callers check
+       PA_CONTEXT_IS_GOOD right after it), the rest from the mainloop */
+    c->st = PA_CONTEXT_CONNECTING;
+    if (c->state_cb) c->state_cb(c, c->state_ud);
     ctx_state(c, PA_CONTEXT_AUTHORIZING);
     ctx_state(c, PA_CONTEXT_SETTING_NAME);
     ctx_state(c, PA_CONTEXT_READY);
@@ -244,12 +255,13 @@ EXPORT int pa_context_connect(pa_context *c, const char *server, pa_context_flag
 }
 EXPORT void pa_context_disconnect(pa_context *c)
 {
+    T();
     if (c->st == PA_CONTEXT_TERMINATED) return;
     c->st = PA_CONTEXT_TERMINATED;
     if (c->state_cb) c->state_cb(c, c->state_ud);
 }
 EXPORT pa_context_state_t pa_context_get_state(const pa_context *c) { return c->st; }
-EXPORT int pa_context_errno(const pa_context *c) { return c->err; }
+EXPORT int pa_context_errno(const pa_context *c) { D("> pa_context_errno %d", c->err); return c->err; }
 
 static void job_success(void *a, void *b, void *c_, intptr_t i)
 {
@@ -310,6 +322,7 @@ static void job_sii(void *a, void *b, void *c_, intptr_t i)
 }
 EXPORT pa_operation *pa_context_get_sink_input_info(pa_context *c, uint32_t idx, pa_sink_input_info_cb_t cb, void *ud)
 {
+    T();
     pa_operation *o = op_new();
     struct sii_req *r = calloc(1, sizeof *r);
     if (!o || !r) { free(o); free(r); return NULL; }
@@ -328,6 +341,7 @@ static void job_sub_change(void *a, void *b, void *c_, intptr_t idx)
 }
 EXPORT pa_operation *pa_context_set_sink_input_volume(pa_context *c, uint32_t idx, const pa_cvolume *v, pa_context_success_cb_t cb, void *ud)
 {
+    T();
     for (pa_stream *s = c->m->streams; s; s = s->next)
         if (s->idx == idx && v) s->vol = *v;
     D("set volume idx %u -> %u", idx, v ? pa_cvolume_avg(v) : 0);
@@ -462,7 +476,11 @@ EXPORT int pa_stream_connect_playback(pa_stream *s, const char *dev, const pa_bu
     (void)dev; (void)sync;
     if (volume) s->vol = *volume;
     s->corked = (flags & PA_STREAM_START_CORKED) ? 1 : 0;
-    stream_set_state(s, PA_STREAM_CREATING);
+    D("connect_playback flags 0x%x tlength %d prebuf %d", (unsigned)flags,
+      attr ? (int)attr->tlength : -2, attr ? (int)attr->prebuf : -2);
+    /* creating — at once, like PulseAudio (PA_STREAM_IS_GOOD right after connect) */
+    s->st = PA_STREAM_CREATING;
+    if (s->state_cb) s->state_cb(s, s->state_ud);
     if (pcm_open(s, attr) < 0) {
         s->ctx->err = PA_ERR_NOTSUPPORTED;
         stream_set_state(s, PA_STREAM_FAILED);
@@ -484,6 +502,7 @@ static void list_remove(pa_stream *s)
 
 EXPORT int pa_stream_disconnect(pa_stream *s)
 {
+    T();
     if (s->pcm) { snd_pcm_drop(s->pcm); snd_pcm_close(s->pcm); s->pcm = NULL; }
     s->qlen = 0;
     s->refs++;                      /* list_remove may drop the last list ref */
@@ -538,6 +557,7 @@ static void stream_service(pa_stream *s) { if (s->st == PA_STREAM_READY) pcm_fee
 
 EXPORT size_t pa_stream_writable_size(const pa_stream *cs)
 {
+    T();
     pa_stream *s = (pa_stream *)cs;
     if (s->st != PA_STREAM_READY || !s->pcm) return (size_t)-1;
     snd_pcm_sframes_t av;
@@ -591,6 +611,7 @@ static pa_operation *stream_success(pa_stream *s, pa_stream_success_cb_t cb, voi
 
 EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t cb, void *ud)
 {
+    T();
     b = !!b;
     if (s->pcm && b != s->corked) {
         snd_pcm_state_t st = snd_pcm_state(s->pcm);
@@ -613,6 +634,7 @@ EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t 
 
 EXPORT pa_operation *pa_stream_flush(pa_stream *s, pa_stream_success_cb_t cb, void *ud)
 {
+    T();
     if (s->pcm) {
         snd_pcm_drop(s->pcm);
         snd_pcm_prepare(s->pcm);
@@ -654,11 +676,13 @@ static void fill_timing(pa_stream *s)
 
 EXPORT const pa_timing_info *pa_stream_get_timing_info(pa_stream *s)
 {
+    T();
     fill_timing(s);
     return &s->ti;
 }
 EXPORT pa_operation *pa_stream_update_timing_info(pa_stream *s, pa_stream_success_cb_t cb, void *ud)
 {
+    T();
     fill_timing(s);
     return stream_success(s, cb, ud);
 }
@@ -670,6 +694,7 @@ EXPORT void pa_operation_unref(pa_operation *o) { if (o && --o->refs == 0) free(
 /* ---------------------------------------------------------------- misc */
 EXPORT const char *pa_strerror(int e)
 {
+    T();
     switch (e < 0 ? -e : e) {
     case PA_OK:               return "OK";
     case PA_ERR_NOTSUPPORTED: return "Not supported (ALSA device refused the format)";
@@ -683,6 +708,7 @@ EXPORT int pa_proplist_sets(pa_proplist *p, const char *k, const char *v) { (voi
 
 EXPORT pa_cvolume *pa_cvolume_set(pa_cvolume *a, unsigned channels, pa_volume_t v)
 {
+    T();
     if (channels > PA_CHANNELS_MAX) channels = PA_CHANNELS_MAX;
     a->channels = (uint8_t)channels;
     for (unsigned i = 0; i < channels; i++) a->values[i] = v;
@@ -690,6 +716,7 @@ EXPORT pa_cvolume *pa_cvolume_set(pa_cvolume *a, unsigned channels, pa_volume_t 
 }
 EXPORT pa_volume_t pa_cvolume_avg(const pa_cvolume *a)
 {
+    T();
     uint64_t sum = 0;
     if (!a || !a->channels) return PA_VOLUME_MUTED;
     for (unsigned i = 0; i < a->channels; i++) sum += a->values[i];
@@ -698,18 +725,21 @@ EXPORT pa_volume_t pa_cvolume_avg(const pa_cvolume *a)
 EXPORT struct timeval *pa_gettimeofday(struct timeval *tv) { gettimeofday(tv, NULL); return tv; }
 EXPORT pa_usec_t pa_timeval_diff(const struct timeval *a, const struct timeval *b)
 {
+    T();
     int64_t ua = (int64_t)a->tv_sec * 1000000 + a->tv_usec;
     int64_t ub = (int64_t)b->tv_sec * 1000000 + b->tv_usec;
     return (pa_usec_t)(ua > ub ? ua - ub : ub - ua);
 }
 EXPORT size_t pa_usec_to_bytes(pa_usec_t t, const pa_sample_spec *spec)
 {
+    T();
     return (size_t)((t * spec->rate) / 1000000ULL) * pa_frame_size(spec);
 }
 
 /* used above; real libpulse exports them too, cheap to have */
 EXPORT size_t pa_frame_size(const pa_sample_spec *spec)
 {
+    T();
     size_t b;
     switch (spec->format) {
     case PA_SAMPLE_U8: case PA_SAMPLE_ALAW: case PA_SAMPLE_ULAW: b = 1; break;
@@ -721,16 +751,19 @@ EXPORT size_t pa_frame_size(const pa_sample_spec *spec)
 }
 EXPORT size_t pa_sample_size(const pa_sample_spec *spec)
 {
+    T();
     return spec->channels ? pa_frame_size(spec) / spec->channels : 0;
 }
 EXPORT pa_usec_t pa_bytes_to_usec(uint64_t length, const pa_sample_spec *spec)
 {
+    T();
     size_t fs = pa_frame_size(spec);
     if (!fs || !spec->rate) return 0;
     return (pa_usec_t)((length / fs) * 1000000ULL / spec->rate);
 }
 EXPORT pa_channel_map *pa_channel_map_init_auto(pa_channel_map *m, unsigned channels, pa_channel_map_def_t def)
 {
+    T();
     (void)def;
     memset(m, 0, sizeof *m);
     m->channels = (uint8_t)channels;
