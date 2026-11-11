@@ -22,10 +22,13 @@ define DIGIFOX_SRC_BUILD_CMDS
 		-o $(@D)/raat_card.so $(@D)/raat_card.c -ldl
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s -Wall \
 		-o $(@D)/libasound_scope_digilvl.so $(@D)/scope_digilvl.c -lasound
-	# Spotify Soloist: libpulse.so.0 прямо в ALSA (pa_shim.c, заголовки pulse/ — LGPL-2.1+)
-	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -fPIC -shared -s -Wall -fvisibility=hidden \
-		-I$(@D) -Wl,-soname,libpulse.so.0 \
-		-o $(@D)/libpulse.so.0 $(@D)/pa_shim.c -lasound -lpthread
+	# Spotify Soloist: libpulse.so.0 прямо в ALSA — soloist-shim/ (foonerd/alsa_soloist_connect,
+	# MIT, см. SOURCE_REVISION): те же 48 функций PulseAudio, проверен с Soloist 1.3.x
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) -std=gnu99 -O2 -fPIC -shared -s \
+		-fvisibility=hidden -Wall -Wno-unused-parameter \
+		-I$(@D)/soloist-shim/include -I$(@D)/soloist-shim/src \
+		-Wl,-soname,libpulse.so.0 -Wl,--version-script=$(@D)/soloist-shim/pulse.sym \
+		-o $(@D)/libpulse.so.0 $(@D)/soloist-shim/src/*.c -lasound -lm -lpthread
 endef
 
 define DIGIFOX_SRC_INSTALL_TARGET_CMDS

@@ -33,9 +33,13 @@ start() {
     [ -s $SKEY ] && { /usr/bin/digifox-soloist ensure >/dev/null 2>&1 & }
     if [ -s $SKEY ] && [ ! -f /etc/digifox/spotify-legacy ] && [ -x $SDIR/soloist ]; then
         mkdir -p /etc/digifox/soloist $SDIR/cache
-        # звук: libpulse.so.0 из /usr/lib/digifox/soloist — прямо в ALSA, без PulseAudio;
-        # громкость Spotify не трогает сэмплы (громкость — у усилителя), -i 100
-        LD_LIBRARY_PATH=/usr/lib/digifox/soloist \
+        # звук: libpulse.so.0 из /usr/lib/digifox/soloist (soloist-shim) — прямо в ALSA, без
+        # PulseAudio. LD_PRELOAD: библиотека сама стирает ключ из командной строки (ps).
+        # Громкость Spotify не трогает сэмплы (APULSE_EXTERNAL_VOLUME: громкость — у усилителя).
+        # touch /etc/digifox/soloist-debug — подробный журнал звука в /tmp/soloist.log
+        [ -f /etc/digifox/soloist-debug ] && export APULSE_DIAG=1
+        LD_PRELOAD=/usr/lib/digifox/soloist/libpulse.so.0 LD_LIBRARY_PATH=/usr/lib/digifox/soloist \
+        APULSE_PLAYBACK_DEVICE=plug:default APULSE_EXTERNAL_VOLUME=1 \
         $SDIR/soloist -n "$NAME" -k "$(cat $SKEY)" -D /etc/digifox/soloist \
             -C $SDIR/cache -z 100 -i 100 -w 127.0.0.1:3679 > /tmp/soloist.log 2>&1 &
         SPID=$!

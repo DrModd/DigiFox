@@ -18,7 +18,7 @@
 #         /var/lib/digifox/soloist/fetched       когда скачан (unix-время)
 #         /var/lib/digifox/soloist/cache/        кэш треков (-z 100 МБ)
 #         /etc/digifox/soloist/                  вход в Spotify, ws.port (данные Soloist)
-#         /usr/lib/digifox/soloist/libpulse.so.0 звук Soloist прямо в ALSA (pa_shim.c)
+#         /usr/lib/digifox/soloist/libpulse.so.0 звук Soloist прямо в ALSA (soloist-shim)
 
 DIR=/var/lib/digifox/soloist
 BIN=$DIR/soloist
