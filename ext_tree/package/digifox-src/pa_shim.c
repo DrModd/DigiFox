@@ -31,18 +31,33 @@
 #include <sys/time.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #define EXPORT __attribute__((visibility("default")))
 #define T() D("> %s", __func__)
 
-static int dbg = -1;
+/* DIGIFOX_PA_DEBUG=1: log to stderr; DIGIFOX_PA_LOG=<file>: also to a file, each line
+   written through (O_SYNC) — survives a hang or a watchdog reboot */
+static int dbg = -1, dbg_fd = -1;
 static void D(const char *f, ...)
 {
-    if (dbg < 0) { const char *e = getenv("DIGIFOX_PA_DEBUG"); dbg = e && *e == '1'; }
+    if (dbg < 0) {
+        const char *e = getenv("DIGIFOX_PA_DEBUG"), *l = getenv("DIGIFOX_PA_LOG");
+        dbg = e && *e == '1';
+        if (l && *l) { dbg_fd = open(l, O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0644); if (dbg_fd >= 0) dbg = 1; }
+    }
     if (!dbg) return;
+    char buf[256];
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    int n = snprintf(buf, sizeof buf, "pa_shim %ld.%03ld: ", (long)t.tv_sec, t.tv_nsec / 1000000);
     va_list ap; va_start(ap, f);
-    fprintf(stderr, "pa_shim: "); vfprintf(stderr, f, ap); fputc('\n', stderr);
+    n += vsnprintf(buf + n, sizeof buf - (size_t)n - 1, f, ap);
     va_end(ap);
+    if (n > (int)sizeof buf - 2) n = (int)sizeof buf - 2;
+    buf[n++] = '\n';
+    if (dbg_fd >= 0) { ssize_t w = write(dbg_fd, buf, (size_t)n); (void)w; }
+    else { ssize_t w = write(2, buf, (size_t)n); (void)w; }
 }
 
 /* ------------------------------------------------------------------ jobs */
@@ -569,6 +584,7 @@ static snd_pcm_sframes_t pcm_feed(pa_stream *s)
         s->qlen -= b;
     }
     if (!s->started && snd_pcm_state(s->pcm) == SND_PCM_STATE_RUNNING) {
+        D("pcm running, written %lld bytes", (long long)s->written);
         s->started = 1;
         stream_notify(s, 1);
     }
@@ -614,6 +630,10 @@ EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_fre
     memcpy(s->q + s->qlen, data, nbytes);
     s->qlen += nbytes;
     s->written += (int64_t)nbytes;
+    static unsigned nw;
+    if (nw++ % 200 == 0)
+        D("write #%u: %zu bytes, total %lld, queued %zu, pcm state %d", nw, nbytes,
+          (long long)s->written, s->qlen, s->pcm ? (int)snd_pcm_state(s->pcm) : -1);
     if (free_cb) free_cb((void *)data);
     pcm_feed(s);
     return 0;
@@ -647,10 +667,12 @@ EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t 
     if (s->pcm && b != s->corked) {
         snd_pcm_state_t st = snd_pcm_state(s->pcm);
         if (b) {
-            if (st == SND_PCM_STATE_RUNNING) {
-                if (snd_pcm_pause(s->pcm, 1) == 0) s->paused_hw = 1;
-                else { snd_pcm_drop(s->pcm); snd_pcm_prepare(s->pcm); s->paused_hw = 0; }
+            /* no snd_pcm_pause: not every I2S driver pauses safely; the ≤200 ms in the
+               buffer are dropped (Spotify resumes from its own position anyway) */
+            if (st == SND_PCM_STATE_RUNNING || st == SND_PCM_STATE_PREPARED) {
+                snd_pcm_drop(s->pcm); snd_pcm_prepare(s->pcm);
             }
+            s->paused_hw = 0;
         } else {
             if (s->paused_hw) { if (snd_pcm_pause(s->pcm, 0) < 0) snd_pcm_prepare(s->pcm); }
             s->paused_hw = 0;
