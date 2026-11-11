@@ -40,6 +40,7 @@
 /* DIGIFOX_PA_DEBUG=1: log to stderr; DIGIFOX_PA_LOG=<file>: also to a file, each line
    written through (O_SYNC) — survives a hang or a watchdog reboot */
 static int dbg = -1, dbg_fd = -1;
+static int detail;                  /* lines left to log in detail (after an uncork) */
 static void D(const char *f, ...)
 {
     if (dbg < 0) {
@@ -618,7 +619,9 @@ EXPORT size_t pa_stream_writable_size(const pa_stream *cs)
     if ((st == SND_PCM_STATE_RUNNING || st == SND_PCM_STATE_PREPARED) && snd_pcm_delay(s->pcm, &d) < 0) d = 0;
     if (d < 0) d = 0;
     size_t held = s->qlen + (size_t)d * s->frame;
-    return held < s->tlen ? s->tlen - held : 0;
+    size_t w = held < s->tlen ? s->tlen - held : 0;
+    if (detail > 0) { detail--; D("writable %zu (queued %zu, alsa %ld fr, pcm %d)", w, s->qlen, (long)d, (int)st); }
+    return w;
 }
 
 EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_free_cb_t free_cb,
@@ -640,7 +643,8 @@ EXPORT int pa_stream_write(pa_stream *s, const void *data, size_t nbytes, pa_fre
     s->qlen += nbytes;
     s->written += (int64_t)nbytes;
     static unsigned nw;
-    if (nw++ % 200 == 0)
+    if (detail > 0) { detail--; D("write %zu (total %lld, queued %zu, pcm %d)", nbytes, (long long)s->written, s->qlen, s->pcm ? (int)snd_pcm_state(s->pcm) : -1); }
+    else if (nw++ % 200 == 0)
         D("write #%u: %zu bytes, total %lld, queued %zu, pcm state %d", nw, nbytes,
           (long long)s->written, s->qlen, s->pcm ? (int)snd_pcm_state(s->pcm) : -1);
     if (free_cb) free_cb((void *)data);
@@ -690,6 +694,7 @@ EXPORT pa_operation *pa_stream_cork(pa_stream *s, int b, pa_stream_success_cb_t 
     }
     s->corked = b;
     D("cork %d", b);
+    if (!b) detail = 150;
     if (!b) pcm_feed(s);
     return stream_success(s, cb, ud);
 }
@@ -734,6 +739,8 @@ static void fill_timing(pa_stream *s)
     t->configured_sink_usec = s->latency;
     t->configured_source_usec = 0;
     t->since_underrun = 0;
+    if (detail > 0) { detail--; D("timing w %lld r %lld sink %llu us playing %d", (long long)t->write_index,
+                                  (long long)t->read_index, (unsigned long long)t->sink_usec, t->playing); }
 }
 
 EXPORT const pa_timing_info *pa_stream_get_timing_info(pa_stream *s)
